@@ -320,13 +320,11 @@ def _build_embed(profile: dict) -> dict:
         description_parts.append(" • ".join(status_bits))
     description_parts.append(f"Steam ID: `{steamid}`")
     description_parts.append(
-        f"[Steam Profile](https://steamcommunity.com/profiles/{steamid}) • "
-        f"[Stats](https://ruststats.io/profile/{steamid})"
+        f"[Steam Profile](https://steamcommunity.com/profiles/{steamid})"
     )
 
     embed = {
         "title": f"🎯 {name} — Rust Stats",
-        "url": f"https://ruststats.io/profile/{steamid}",
         "description": "\n".join(description_parts),
         "color": EMBED_COLOR,
         "fields": fields,
