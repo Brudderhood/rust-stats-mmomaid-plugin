@@ -25,8 +25,9 @@ Docs: https://mmomaid.com/dev/docs
 import gzip
 import json
 import re
+import time
 
-from mmo_maid_sdk import Plugin, Context
+from mmo_maid_sdk import Plugin, Context, RateLimitError
 
 plugin = Plugin()
 
@@ -41,6 +42,35 @@ STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
 DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
+
+PROXY_RETRY_ATTEMPTS = 3   # extra tries after the first, on RateLimitError
+PROXY_RETRY_CAP_S    = 65  # per-attempt sleep cap (proxy quota window is 1 min)
+
+
+def _proxy_call(ctx: Context, label: str, fn, *args, **kwargs):
+    """Run an http proxy call, sleeping + retrying when the proxy quota trips.
+
+    The SDK raises RateLimitError with a retry_after hint computed from the
+    proxy's "remaining=X.X/min" message (60s when fully exhausted). We honour
+    it so a near-empty quota doesn't fail the user-visible request.
+    """
+    last_exc: RateLimitError | None = None
+    for attempt in range(PROXY_RETRY_ATTEMPTS + 1):
+        try:
+            return fn(*args, **kwargs)
+        except RateLimitError as exc:
+            last_exc = exc
+            if attempt >= PROXY_RETRY_ATTEMPTS:
+                break
+            delay = min(max(int(getattr(exc, "retry_after", 0) or 5), 1), PROXY_RETRY_CAP_S)
+            ctx.log(
+                f"{label}: proxy quota exhausted ({exc}); sleeping {delay}s "
+                f"and retrying ({attempt + 1}/{PROXY_RETRY_ATTEMPTS})",
+                level="warning",
+            )
+            time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 @plugin.on_ready
@@ -90,7 +120,10 @@ def _http_get_text(ctx: Context, url: str) -> tuple[int, str]:
     (the proxy hands compressed bodies through as binary-looking text).
     Also tries to decompress gzip in-process as a belt-and-braces fallback.
     """
-    resp = ctx.http.get(
+    resp = _proxy_call(
+        ctx,
+        f"GET {url}",
+        ctx.http.get,
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MMOMaidPlugin/1.0",
@@ -311,7 +344,10 @@ def _build_embed(profile: dict) -> dict:
 def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]:
     """Hit ruststats.io for the profile. Returns (profile, error_message)."""
     try:
-        resp = ctx.http.post(
+        resp = _proxy_call(
+            ctx,
+            f"ruststats.io profile {steamid}",
+            ctx.http.post,
             RUSTSTATS_URL,
             body=json.dumps({"id": steamid}),
             headers={
@@ -322,6 +358,9 @@ def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]
                 "User-Agent": "Mozilla/5.0 (compatible; MMOMaidPlugin/1.0)",
             },
         )
+    except RateLimitError as exc:
+        ctx.log(f"ruststats.io rate-limited after retries: {exc}", level="error")
+        return None, "ruststats.io is rate-limited right now. Try again in about a minute."
     except Exception as exc:
         ctx.log(f"ruststats.io request failed: {exc}", level="error")
         return None, "Failed to reach ruststats.io. Try again in a moment."
