@@ -341,45 +341,78 @@ def _build_embed(profile: dict) -> dict:
     return embed
 
 
+TRANSIENT_HTTP_STATUSES = (500, 502, 503, 504)
+TRANSIENT_RETRY_DELAYS_S = (3, 8, 20)  # ruststats.io 5xx are usually transient
+
+
 def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]:
-    """Hit ruststats.io for the profile. Returns (profile, error_message)."""
-    try:
-        resp = _proxy_call(
-            ctx,
-            f"ruststats.io profile {steamid}",
-            ctx.http.post,
-            RUSTSTATS_URL,
-            body=json.dumps({"id": steamid}),
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "*/*",
-                "Origin": "https://ruststats.io",
-                "Referer": f"https://ruststats.io/profile/{steamid}",
-                "User-Agent": "Mozilla/5.0 (compatible; MMOMaidPlugin/1.0)",
-            },
-        )
-    except RateLimitError as exc:
-        ctx.log(f"ruststats.io rate-limited after retries: {exc}", level="error")
-        return None, "Stats service is rate-limited right now. Try again in about a minute."
-    except Exception as exc:
-        ctx.log(
-            f"ruststats.io request failed: {type(exc).__name__}: {exc!r}",
-            level="error",
-        )
-        return None, "Couldn't reach the stats service. Try again in a moment."
+    """Hit ruststats.io for the profile. Returns (profile, error_message).
 
-    status = resp.get("status", 0)
-    body = resp.get("body") or resp.get("body_bytes") or ""
+    Retries on transient HTTP errors (5xx) — observed in the wild that
+    ruststats.io occasionally returns 500 on the first hit and succeeds
+    on the next call seconds later.
+    """
+    last_status = 0
+    last_body: object = ""
 
-    if status != 200:
+    for attempt in range(len(TRANSIENT_RETRY_DELAYS_S) + 1):
+        try:
+            resp = _proxy_call(
+                ctx,
+                f"ruststats.io profile {steamid}",
+                ctx.http.post,
+                RUSTSTATS_URL,
+                body=json.dumps({"id": steamid}),
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "*/*",
+                    "Origin": "https://ruststats.io",
+                    "Referer": f"https://ruststats.io/profile/{steamid}",
+                    "User-Agent": "Mozilla/5.0 (compatible; MMOMaidPlugin/1.0)",
+                },
+            )
+        except RateLimitError as exc:
+            ctx.log(f"ruststats.io rate-limited after retries: {exc}", level="error")
+            return None, "Stats service is rate-limited right now. Try again in about a minute."
+        except Exception as exc:
+            ctx.log(
+                f"ruststats.io request failed: {type(exc).__name__}: {exc!r}",
+                level="error",
+            )
+            return None, "Couldn't reach the stats service. Try again in a moment."
+
+        try:
+            status = int(resp.get("status", 0) or 0)
+        except (AttributeError, ValueError, TypeError):
+            status = 0
+        body = resp.get("body") or resp.get("body_bytes") or ""
+        last_status, last_body = status, body
+
+        if status == 200:
+            break
+
+        if status in TRANSIENT_HTTP_STATUSES and attempt < len(TRANSIENT_RETRY_DELAYS_S):
+            delay = TRANSIENT_RETRY_DELAYS_S[attempt]
+            ctx.log(
+                f"ruststats.io transient {status} for {steamid}; sleeping {delay}s "
+                f"and retrying ({attempt + 1}/{len(TRANSIENT_RETRY_DELAYS_S)})",
+                level="warning",
+            )
+            time.sleep(delay)
+            continue
+
+        # Non-transient status, or transient retries exhausted.
         ctx.log(
-            f"ruststats.io non-200 ({status}) for {steamid}; body preview={str(body)[:300]!r}",
+            f"ruststats.io non-200 ({status}) for {steamid} after {attempt + 1} "
+            f"attempt(s); body preview={str(body)[:300]!r}",
             level="warning",
         )
+        if status in TRANSIENT_HTTP_STATUSES:
+            return None, "Stats service is having a moment. Try again shortly."
         return None, f"Stats service returned status {status}. The profile may not exist."
 
     try:
-        profile = json.loads(body) if isinstance(body, (str, bytes)) else body
+        profile = json.loads(last_body) if isinstance(last_body, (str, bytes)) else last_body
     except (ValueError, TypeError) as exc:
         ctx.log(f"Failed to parse ruststats.io JSON: {exc}", level="error")
         return None, "Got a bad response from the stats service."
