@@ -321,7 +321,7 @@ def _build_embed(profile: dict) -> dict:
     description_parts.append(f"Steam ID: `{steamid}`")
     description_parts.append(
         f"[Steam Profile](https://steamcommunity.com/profiles/{steamid}) • "
-        f"[ruststats.io](https://ruststats.io/profile/{steamid})"
+        f"[Stats](https://ruststats.io/profile/{steamid})"
     )
 
     embed = {
@@ -360,23 +360,29 @@ def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]
         )
     except RateLimitError as exc:
         ctx.log(f"ruststats.io rate-limited after retries: {exc}", level="error")
-        return None, "ruststats.io is rate-limited right now. Try again in about a minute."
+        return None, "Stats service is rate-limited right now. Try again in about a minute."
     except Exception as exc:
-        ctx.log(f"ruststats.io request failed: {exc}", level="error")
-        return None, "Failed to reach ruststats.io. Try again in a moment."
+        ctx.log(
+            f"ruststats.io request failed: {type(exc).__name__}: {exc!r}",
+            level="error",
+        )
+        return None, "Couldn't reach the stats service. Try again in a moment."
 
     status = resp.get("status", 0)
     body = resp.get("body") or resp.get("body_bytes") or ""
 
     if status != 200:
-        ctx.log(f"ruststats.io non-200 ({status}) for {steamid}", level="warning")
-        return None, f"ruststats.io returned status {status}. The profile may not exist."
+        ctx.log(
+            f"ruststats.io non-200 ({status}) for {steamid}; body preview={str(body)[:300]!r}",
+            level="warning",
+        )
+        return None, f"Stats service returned status {status}. The profile may not exist."
 
     try:
         profile = json.loads(body) if isinstance(body, (str, bytes)) else body
     except (ValueError, TypeError) as exc:
         ctx.log(f"Failed to parse ruststats.io JSON: {exc}", level="error")
-        return None, "Got a bad response from ruststats.io."
+        return None, "Got a bad response from the stats service."
 
     if not isinstance(profile, dict) or not profile.get("steamid"):
         return None, f"No profile found for Steam ID `{steamid}`."
@@ -444,6 +450,13 @@ def handle_statscheck_chat(ctx: Context, event: dict):
         return
 
     raw = parts[1].strip()
+
+    # Immediate ack so the user knows we received it. Resolution + fetch can
+    # take a while when the proxy quota is near-empty (we sleep + retry).
+    ctx.discord.send_message(
+        channel_id=channel_id,
+        content=f"🔍 Looking up stats for `{raw}`…",
+    )
 
     steamid, err = _resolve_to_steamid64(ctx, raw)
     if err:
