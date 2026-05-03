@@ -22,6 +22,7 @@ Slash command is declared in manifest.json.
 
 Docs: https://mmomaid.com/dev/docs
 """
+import gzip
 import json
 import re
 
@@ -83,19 +84,41 @@ def _extract_option(event: dict, name: str) -> str:
 
 
 def _http_get_text(ctx: Context, url: str) -> tuple[int, str]:
-    """GET a URL via the proxy, returning (status, body_as_text)."""
+    """GET a URL via the proxy, returning (status, body_as_text).
+
+    Forces Accept-Encoding: identity so Steam doesn't gzip the response
+    (the proxy hands compressed bodies through as binary-looking text).
+    Also tries to decompress gzip in-process as a belt-and-braces fallback.
+    """
     resp = ctx.http.get(
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MMOMaidPlugin/1.0",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",  # please don't compress, the proxy can't decode it
         },
     )
     status = int(resp.get("status", 0) or 0)
     body = resp.get("body") or resp.get("body_bytes") or ""
-    if isinstance(body, bytes):
-        body = body.decode("utf-8", errors="ignore")
+
+    # If the body still looks gzip-ish (proxy ignored Accept-Encoding), try to decompress.
+    if isinstance(body, (bytes, bytearray)):
+        if body[:2] == b"\x1f\x8b":
+            try:
+                body = gzip.decompress(bytes(body))
+            except Exception:
+                pass
+        body = bytes(body).decode("utf-8", errors="replace")
+    elif isinstance(body, str) and body.startswith("\x1f"):
+        # Body arrived as a string with binary gzip bytes lossily decoded as text.
+        # We can't recover the original bytes, but flag it so the caller can log.
+        ctx.log(
+            f"_http_get_text: body looks gzip-compressed but was lossily decoded "
+            f"to text by the proxy — cannot decompress. url={url}",
+            level="warning",
+        )
+
     return status, body
 
 
