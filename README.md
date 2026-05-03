@@ -20,7 +20,7 @@ deaths, gathering, and accuracy stats — plus profile links.
 1. Zip the plugin folder (do **not** include `sdk_extracted/` or the `.whl`):
 
    ```powershell
-   Compress-Archive -Path __main__.py,requirements.txt,README.md -DestinationPath rust_stats_plugin.zip -Force
+   Compress-Archive -Path __main__.py,manifest.json,requirements.txt,README.md -DestinationPath rust_stats_plugin.zip -Force
    ```
 
 2. Upload `rust_stats_plugin.zip` in the [MMO Maid Developer Portal](https://mmomaid.com/dev).
@@ -29,8 +29,9 @@ deaths, gathering, and accuracy stats — plus profile links.
 
    - **Capability:** `proxy:http`
    - **Allowed domain:** `ruststats.io`
-   - **Slash command:** `statscheck`
-     - Option: `steamid` — type `string`, required, description "SteamID64 (17 digits)"
+
+   The `/statscheck` slash command itself is declared in `manifest.json`,
+   not the upload form.
 
 4. Click **Submit for Review**.
 
@@ -39,6 +40,7 @@ deaths, gathering, and accuracy stats — plus profile links.
 ```
 rust_stats_plugin/
 ├── __main__.py        Entry point — slash command handler
+├── manifest.json      Declares the /statscheck slash command
 ├── requirements.txt   SDK dependency
 └── README.md          This file
 ```

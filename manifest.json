@@ -1,0 +1,16 @@
+{
+  "slash_commands": [
+    {
+      "name": "statscheck",
+      "description": "Check Rust player stats by Steam ID",
+      "options": [
+        {
+          "name": "steamid",
+          "description": "SteamID64 (17 digits, e.g. 76561198254115883)",
+          "type": 3,
+          "required": true
+        }
+      ]
+    }
+  ]
+}
