@@ -31,12 +31,13 @@ plugin = Plugin()
 
 RUSTSTATS_URL = "https://ruststats.io/api/rpc/get_profile"
 
-STEAMID64_RE     = re.compile(r"^\d{17}$")
-PROFILE_URL_RE   = re.compile(r"steamcommunity\.com/profiles/(\d{17})", re.I)
-VANITY_URL_RE    = re.compile(r"steamcommunity\.com/id/([A-Za-z0-9_\-]+)", re.I)
-VANITY_NAME_RE   = re.compile(r"^[A-Za-z0-9_\-]{2,32}$")
-STEAMID64_TAG_RE = re.compile(r"<steamID64>(\d{17})</steamID64>")
-DIGITS17_RE      = re.compile(r"\b(\d{17})\b")
+STEAMID64_RE       = re.compile(r"^\d{17}$")
+PROFILE_URL_RE     = re.compile(r"steamcommunity\.com/profiles/(\d{17})", re.I)
+VANITY_URL_RE      = re.compile(r"steamcommunity\.com/id/([A-Za-z0-9_\-]+)", re.I)
+VANITY_NAME_RE     = re.compile(r"^[A-Za-z0-9_\-]{2,32}$")
+STEAMID64_TAG_RE   = re.compile(r"<steamID64>(\d{17})</steamID64>")
+STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
+DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
 
@@ -81,6 +82,23 @@ def _extract_option(event: dict, name: str) -> str:
     return ""
 
 
+def _http_get_text(ctx: Context, url: str) -> tuple[int, str]:
+    """GET a URL via the proxy, returning (status, body_as_text)."""
+    resp = ctx.http.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MMOMaidPlugin/1.0",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    status = int(resp.get("status", 0) or 0)
+    body = resp.get("body") or resp.get("body_bytes") or ""
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="ignore")
+    return status, body
+
+
 def _resolve_to_steamid64(ctx: Context, raw: str) -> tuple[str, str | None]:
     """Resolve raw input → (steamid64, error_message_or_None)."""
     s = raw.strip()
@@ -109,24 +127,52 @@ def _resolve_to_steamid64(ctx: Context, raw: str) -> tuple[str, str | None]:
             return m.group(1), None
         return "", "couldn't parse that as a Steam ID, profile URL, or vanity name"
 
-    # Resolve vanity → SteamID64 via Steam's public XML endpoint (no API key needed)
+    # ── Strategy 1: XML endpoint — returns <steamID64>...</steamID64> ─────
+    xml_url = f"https://steamcommunity.com/id/{vanity}/?xml=1"
     try:
-        resp = ctx.http.get(
-            f"https://steamcommunity.com/id/{vanity}/?xml=1",
-            headers={"User-Agent": "Mozilla/5.0 (compatible; MMOMaidPlugin/1.0)"},
-        )
+        status, body = _http_get_text(ctx, xml_url)
     except Exception as exc:
-        ctx.log(f"vanity resolve failed for {vanity!r}: {exc}", level="error")
-        return "", "couldn't reach steamcommunity.com to resolve that name"
+        ctx.log(f"vanity XML lookup failed for {vanity!r}: {exc}", level="error")
+        status, body = 0, ""
 
-    body = resp.get("body") or resp.get("body_bytes") or ""
-    if isinstance(body, bytes):
-        body = body.decode("utf-8", errors="ignore")
+    if status == 200 and body:
+        m = STEAMID64_TAG_RE.search(body)
+        if m:
+            return m.group(1), None
+        if "could not be found" in body.lower() or "no users matching" in body.lower():
+            return "", f"no Steam profile with vanity name `{vanity}`"
 
-    m = STEAMID64_TAG_RE.search(body)
-    if m:
-        return m.group(1), None
+    # If non-200 or unparseable, log the diagnostics for debugging
+    if status != 200 or not body:
+        ctx.log(
+            f"vanity XML non-200 for {vanity!r}: status={status} body_len={len(body)} "
+            f"preview={body[:300]!r}",
+            level="warning",
+        )
+        if status in (403, 451, 0):
+            return "", (
+                f"couldn't resolve `{vanity}` — make sure `steamcommunity.com` is "
+                "in the plugin's allowed domains (Dev Portal upload form)."
+            )
 
+    # ── Strategy 2: scrape HTML page — has g_rgProfileData JS with steamid ─
+    html_url = f"https://steamcommunity.com/id/{vanity}/"
+    try:
+        status, body = _http_get_text(ctx, html_url)
+    except Exception as exc:
+        ctx.log(f"vanity HTML lookup failed for {vanity!r}: {exc}", level="error")
+        return "", f"couldn't reach steamcommunity.com to resolve `{vanity}`"
+
+    if status == 200 and body:
+        m = STEAMID_JSON_RE.search(body)
+        if m:
+            return m.group(1), None
+
+    ctx.log(
+        f"vanity HTML resolve: no steamid found for {vanity!r}: status={status} "
+        f"body_len={len(body)} preview={body[:300]!r}",
+        level="warning",
+    )
     return "", f"no Steam profile found for `{vanity}`"
 
 
