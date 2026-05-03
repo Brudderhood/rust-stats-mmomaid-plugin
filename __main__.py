@@ -2,20 +2,23 @@
 Rust Stats Plugin
 =================
 
-Adds a /statscheck slash command that fetches a Rust player profile from
-ruststats.io and posts a formatted embed back to Discord.
+Two ways to look up a Rust player's stats from ruststats.io:
 
-Accepted input forms (any of these work):
+  1. Slash command:   /statscheck steamid:<value>
+  2. Chat command:    !statscheck <value>
+
+Accepted input forms (any of these work for either command):
   - SteamID64               76561198254115883
   - Profile URL             https://steamcommunity.com/profiles/7656...
   - Vanity URL              https://steamcommunity.com/id/somename
   - Vanity name             somename
 
 Capabilities required:
-  - proxy:http   (allowed domains: ruststats.io, steamcommunity.com)
+  - proxy:http               (allowed domains: ruststats.io, steamcommunity.com)
+  - discord:send_message     (for chat-command replies)
+  - events:message_content   (to read !statscheck messages)
 
-Slash command (declared in manifest.json):
-  - statscheck (option: steamid, type=string, required)
+Slash command is declared in manifest.json.
 
 Docs: https://mmomaid.com/dev/docs
 """
@@ -236,37 +239,8 @@ def _build_embed(profile: dict) -> dict:
     return embed
 
 
-@plugin.on_slash_command("statscheck")
-def handle_statscheck(ctx: Context, event: dict):
-    raw = _extract_option(event, "steamid")
-
-    if not raw:
-        # Log the event keys so we can see what shape options arrive in
-        ctx.log(
-            f"statscheck: no steamid option found. event keys: {list(event.keys())} "
-            f"event preview: {json.dumps(event, default=str)[:1500]}",
-            level="warning",
-        )
-        ctx.interaction.respond(
-            content=(
-                "❌ Please provide a Steam ID, profile URL, or vanity name.\n"
-                "Examples:\n"
-                "• `/statscheck 76561198254115883`\n"
-                "• `/statscheck https://steamcommunity.com/id/somename`\n"
-                "• `/statscheck somename`"
-            ),
-            ephemeral=True,
-        )
-        return
-
-    # Defer immediately — vanity resolution + ruststats.io call can exceed 3s
-    ctx.interaction.defer()
-
-    steamid, err = _resolve_to_steamid64(ctx, raw)
-    if err:
-        ctx.interaction.followup(content=f"❌ {err}: `{raw}`", ephemeral=True)
-        return
-
+def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]:
+    """Hit ruststats.io for the profile. Returns (profile, error_message)."""
     try:
         resp = ctx.http.post(
             RUSTSTATS_URL,
@@ -281,42 +255,99 @@ def handle_statscheck(ctx: Context, event: dict):
         )
     except Exception as exc:
         ctx.log(f"ruststats.io request failed: {exc}", level="error")
-        ctx.interaction.followup(
-            content="⚠️ Failed to reach ruststats.io. Try again in a moment.",
-            ephemeral=True,
-        )
-        return
+        return None, "Failed to reach ruststats.io. Try again in a moment."
 
     status = resp.get("status", 0)
     body = resp.get("body") or resp.get("body_bytes") or ""
 
     if status != 200:
         ctx.log(f"ruststats.io non-200 ({status}) for {steamid}", level="warning")
-        ctx.interaction.followup(
-            content=f"⚠️ ruststats.io returned status {status}. The profile may not exist.",
-            ephemeral=True,
-        )
-        return
+        return None, f"ruststats.io returned status {status}. The profile may not exist."
 
     try:
         profile = json.loads(body) if isinstance(body, (str, bytes)) else body
     except (ValueError, TypeError) as exc:
         ctx.log(f"Failed to parse ruststats.io JSON: {exc}", level="error")
-        ctx.interaction.followup(
-            content="⚠️ Got a bad response from ruststats.io.",
-            ephemeral=True,
-        )
-        return
+        return None, "Got a bad response from ruststats.io."
 
     if not isinstance(profile, dict) or not profile.get("steamid"):
-        ctx.interaction.followup(
-            content=f"⚠️ No profile found for Steam ID `{steamid}`.",
-            ephemeral=True,
+        return None, f"No profile found for Steam ID `{steamid}`."
+
+    return profile, None
+
+
+USAGE_HELP = (
+    "❌ Please provide a Steam ID, profile URL, or vanity name.\n"
+    "Examples:\n"
+    "• `!statscheck 76561198254115883`\n"
+    "• `!statscheck https://steamcommunity.com/id/somename`\n"
+    "• `!statscheck somename`"
+)
+
+
+@plugin.on_slash_command("statscheck")
+def handle_statscheck_slash(ctx: Context, event: dict):
+    raw = _extract_option(event, "steamid")
+
+    if not raw:
+        ctx.log(
+            f"statscheck: no steamid option found. event keys: {list(event.keys())} "
+            f"event preview: {json.dumps(event, default=str)[:1500]}",
+            level="warning",
         )
+        ctx.interaction.respond(content=USAGE_HELP, ephemeral=True)
         return
 
-    embed = _build_embed(profile)
-    ctx.interaction.followup(embeds=[embed])
+    ctx.interaction.defer()
+
+    steamid, err = _resolve_to_steamid64(ctx, raw)
+    if err:
+        ctx.interaction.followup(content=f"❌ {err}: `{raw}`", ephemeral=True)
+        return
+
+    profile, err = _fetch_profile(ctx, steamid)
+    if err:
+        ctx.interaction.followup(content=f"⚠️ {err}", ephemeral=True)
+        return
+
+    ctx.interaction.followup(embeds=[_build_embed(profile)])
+
+
+CHAT_PREFIXES = ("!statscheck", "?statscheck", ".statscheck")
+
+
+@plugin.on_event("message_create")
+def handle_statscheck_chat(ctx: Context, event: dict):
+    content = (event.get("content") or "").strip()
+    if not content:
+        return
+
+    parts = content.split(None, 1)
+    cmd = parts[0].lower()
+    if cmd not in CHAT_PREFIXES:
+        return
+
+    channel_id = event.get("channel_id")
+    if not channel_id:
+        return
+
+    if len(parts) < 2 or not parts[1].strip():
+        ctx.discord.send_message(channel_id=channel_id, content=USAGE_HELP)
+        return
+
+    raw = parts[1].strip()
+
+    steamid, err = _resolve_to_steamid64(ctx, raw)
+    if err:
+        ctx.discord.send_message(channel_id=channel_id, content=f"❌ {err}: `{raw}`")
+        return
+
+    profile, err = _fetch_profile(ctx, steamid)
+    if err:
+        ctx.discord.send_message(channel_id=channel_id, content=f"⚠️ {err}")
+        return
+
+    ctx.discord.send_message(channel_id=channel_id, embeds=[_build_embed(profile)])
 
 
 # ── This must be the last line ────────────────────────────────────────────────

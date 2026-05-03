@@ -6,21 +6,30 @@ back into Discord.
 
 ## Usage
 
-In any channel the bot is in, type `/statscheck` and Discord will prompt
-for the `steamid` argument. Any of the following work as input:
+Two ways to invoke it:
+
+**Slash command** (Discord shows the `steamid:` field — that label is part
+of Discord's UI and can't be hidden on slash commands):
 
 ```
-/statscheck 76561198254115883
-/statscheck https://steamcommunity.com/profiles/76561198254115883
-/statscheck https://steamcommunity.com/id/somename
-/statscheck somename
+/statscheck steamid:76561198254115883
 ```
 
-Vanity names and `steamcommunity.com/id/...` URLs are auto-resolved to a
-SteamID64 via Steam's public XML endpoint (no API key required).
+**Chat command** (no labels — just the prefix and the value):
 
-The plugin replies with a deferred embed containing overview, PvP, kills,
-deaths, gathering, and accuracy stats — plus profile links.
+```
+!statscheck 76561198254115883
+!statscheck https://steamcommunity.com/profiles/76561198254115883
+!statscheck https://steamcommunity.com/id/somename
+!statscheck somename
+```
+
+`?statscheck` and `.statscheck` work as alternate prefixes. Vanity names and
+`steamcommunity.com/id/...` URLs are auto-resolved to a SteamID64 via
+Steam's public XML endpoint (no API key required).
+
+Either invocation returns an embed with overview, PvP, kills, deaths,
+gathering, and accuracy stats — plus links back to Steam and ruststats.io.
 
 ## Packaging & uploading
 
@@ -34,8 +43,10 @@ deaths, gathering, and accuracy stats — plus profile links.
 
 3. On the upload form, declare:
 
-   - **Capability:** `proxy:http`
-   - **Allowed domains:** `ruststats.io`, `steamcommunity.com`
+   - **Capabilities:**
+     - `proxy:http` (allowed domains: `ruststats.io`, `steamcommunity.com`)
+     - `discord:send_message` (for `!statscheck` chat replies)
+     - `events:message_content` (to read the message text)
 
    The `/statscheck` slash command itself is declared in `manifest.json`,
    not the upload form.
