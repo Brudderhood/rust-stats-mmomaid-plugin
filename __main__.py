@@ -3,12 +3,18 @@ Rust Stats Plugin
 =================
 
 Adds a /statscheck slash command that fetches a Rust player profile from
-ruststats.io by Steam ID and posts a formatted embed back to Discord.
+ruststats.io and posts a formatted embed back to Discord.
+
+Accepted input forms (any of these work):
+  - SteamID64               76561198254115883
+  - Profile URL             https://steamcommunity.com/profiles/7656...
+  - Vanity URL              https://steamcommunity.com/id/somename
+  - Vanity name             somename
 
 Capabilities required:
-  - proxy:http   (allowed domain: ruststats.io)
+  - proxy:http   (allowed domains: ruststats.io, steamcommunity.com)
 
-Slash commands to register in the Dev Portal:
+Slash command (declared in manifest.json):
   - statscheck (option: steamid, type=string, required)
 
 Docs: https://mmomaid.com/dev/docs
@@ -21,10 +27,15 @@ from mmo_maid_sdk import Plugin, Context
 plugin = Plugin()
 
 RUSTSTATS_URL = "https://ruststats.io/api/rpc/get_profile"
-STEAMID_RE = re.compile(r"^\d{17}$")
 
-# Discord embed color (Rust orange-ish)
-EMBED_COLOR = 0xCD412B
+STEAMID64_RE     = re.compile(r"^\d{17}$")
+PROFILE_URL_RE   = re.compile(r"steamcommunity\.com/profiles/(\d{17})", re.I)
+VANITY_URL_RE    = re.compile(r"steamcommunity\.com/id/([A-Za-z0-9_\-]+)", re.I)
+VANITY_NAME_RE   = re.compile(r"^[A-Za-z0-9_\-]{2,32}$")
+STEAMID64_TAG_RE = re.compile(r"<steamID64>(\d{17})</steamID64>")
+DIGITS17_RE      = re.compile(r"\b(\d{17})\b")
+
+EMBED_COLOR = 0xCD412B  # Rust orange-ish
 
 
 @plugin.on_ready
@@ -33,27 +44,90 @@ def on_ready(ctx: Context):
 
 
 def _extract_option(event: dict, name: str) -> str:
-    """Pull a slash command option value out of the event payload.
+    """Pull a slash command option value from the event payload.
 
-    The runner may surface options as either {"options": {"name": value}}
-    or {"options": [{"name": ..., "value": ...}, ...]}, so handle both.
+    The runner's exact event shape isn't documented, so try every reasonable
+    container we might see: dict-of-options, list-of-{name,value} dicts,
+    Discord-raw "data.options", and top-level keys.
     """
-    opts = event.get("options")
-    if isinstance(opts, dict):
-        val = opts.get(name)
-        if val is not None:
-            return str(val).strip()
-    if isinstance(opts, list):
-        for item in opts:
-            if isinstance(item, dict) and item.get("name") == name:
-                return str(item.get("value", "")).strip()
-    # Last resort: top-level key on the event itself
-    val = event.get(name)
-    return str(val).strip() if val is not None else ""
+    containers = [
+        event.get("options"),
+        event.get("params"),
+        event.get("arguments"),
+        event.get("args"),
+        (event.get("data") or {}).get("options") if isinstance(event.get("data"), dict) else None,
+    ]
+
+    for opts in containers:
+        if isinstance(opts, dict):
+            v = opts.get(name)
+            if v not in (None, ""):
+                return str(v).strip()
+        elif isinstance(opts, list):
+            for item in opts:
+                if isinstance(item, dict) and item.get("name") == name:
+                    v = item.get("value")
+                    if v not in (None, ""):
+                        return str(v).strip()
+
+    # Top-level fallback (some runners flatten options onto the event)
+    v = event.get(name)
+    if v not in (None, ""):
+        return str(v).strip()
+
+    return ""
+
+
+def _resolve_to_steamid64(ctx: Context, raw: str) -> tuple[str, str | None]:
+    """Resolve raw input → (steamid64, error_message_or_None)."""
+    s = raw.strip()
+    if not s:
+        return "", "missing input"
+
+    # Already a SteamID64
+    if STEAMID64_RE.match(s):
+        return s, None
+
+    # Profile URL containing the SteamID64
+    m = PROFILE_URL_RE.search(s)
+    if m:
+        return m.group(1), None
+
+    # Vanity URL → extract vanity name
+    m = VANITY_URL_RE.search(s)
+    if m:
+        vanity = m.group(1)
+    elif VANITY_NAME_RE.match(s):
+        vanity = s
+    else:
+        # Last try: any 17-digit run anywhere in the string
+        m = DIGITS17_RE.search(s)
+        if m:
+            return m.group(1), None
+        return "", "couldn't parse that as a Steam ID, profile URL, or vanity name"
+
+    # Resolve vanity → SteamID64 via Steam's public XML endpoint (no API key needed)
+    try:
+        resp = ctx.http.get(
+            f"https://steamcommunity.com/id/{vanity}/?xml=1",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MMOMaidPlugin/1.0)"},
+        )
+    except Exception as exc:
+        ctx.log(f"vanity resolve failed for {vanity!r}: {exc}", level="error")
+        return "", "couldn't reach steamcommunity.com to resolve that name"
+
+    body = resp.get("body") or resp.get("body_bytes") or ""
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="ignore")
+
+    m = STEAMID64_TAG_RE.search(body)
+    if m:
+        return m.group(1), None
+
+    return "", f"no Steam profile found for `{vanity}`"
 
 
 def _format_kv(d: dict, keys: list) -> str:
-    """Render selected key/value pairs from a stats sub-dict, skipping missing."""
     lines = []
     for key, label in keys:
         v = d.get(key)
@@ -64,7 +138,6 @@ def _format_kv(d: dict, keys: list) -> str:
 
 
 def _build_embed(profile: dict) -> dict:
-    """Turn the ruststats.io profile JSON into a Discord embed."""
     name = profile.get("personaname") or "Unknown"
     steamid = profile.get("steamid", "")
     avatar = profile.get("avatar_full_url") or profile.get("avatar_url") or ""
@@ -80,17 +153,14 @@ def _build_embed(profile: dict) -> dict:
 
     fields = []
 
-    # Overview
-    overview_text = _format_kv(overview, [
+    fields.append({"name": "Overview", "value": _format_kv(overview, [
         ("time_played", "Time Played"),
         ("played_last_2weeks", "Last 2 Weeks"),
         ("account_created", "Account Created"),
         ("achievement_count", "Achievements"),
-    ])
-    fields.append({"name": "Overview", "value": overview_text, "inline": True})
+    ]), "inline": True})
 
-    # PvP
-    pvp_text = _format_kv(pvp, [
+    fields.append({"name": "PvP", "value": _format_kv(pvp, [
         ("kdr", "K/D"),
         ("kills", "Kills"),
         ("deaths", "Deaths"),
@@ -98,11 +168,9 @@ def _build_embed(profile: dict) -> dict:
         ("headshot_percent", "Headshot %"),
         ("bullets_fired", "Bullets Fired"),
         ("bullets_hit_percent", "Hit %"),
-    ])
-    fields.append({"name": "PvP", "value": pvp_text, "inline": True})
+    ]), "inline": True})
 
-    # Kills breakdown
-    kills_text = _format_kv(kills, [
+    fields.append({"name": "Kills", "value": _format_kv(kills, [
         ("players", "Players"),
         ("scientists", "Scientists"),
         ("bears", "Bears"),
@@ -111,20 +179,16 @@ def _build_embed(profile: dict) -> dict:
         ("deer", "Deer"),
         ("chickens", "Chickens"),
         ("horses", "Horses"),
-    ])
-    fields.append({"name": "Kills", "value": kills_text, "inline": True})
+    ]), "inline": True})
 
-    # Deaths
-    deaths_text = _format_kv(deaths, [
+    fields.append({"name": "Deaths", "value": _format_kv(deaths, [
         ("total", "Total"),
         ("suicide", "Suicides"),
         ("self_inflicted", "Self-Inflicted"),
         ("fall", "Fall"),
-    ])
-    fields.append({"name": "Deaths", "value": deaths_text, "inline": True})
+    ]), "inline": True})
 
-    # Gathered
-    gathered_text = _format_kv(gathered, [
+    fields.append({"name": "Gathered", "value": _format_kv(gathered, [
         ("wood", "Wood"),
         ("stone", "Stone"),
         ("metal_ore", "Metal Ore"),
@@ -132,19 +196,15 @@ def _build_embed(profile: dict) -> dict:
         ("cloth", "Cloth"),
         ("leather", "Leather"),
         ("low_grade_fuel", "Low Grade"),
-    ])
-    fields.append({"name": "Gathered", "value": gathered_text, "inline": True})
+    ]), "inline": True})
 
-    # Combat accuracy
-    bullets_text = _format_kv(bullets, [
+    fields.append({"name": "Bullets Hit", "value": _format_kv(bullets, [
         ("players", "Hits on Players"),
         ("buildings", "Hits on Buildings"),
         ("bears", "Hits on Bears"),
         ("wolves", "Hits on Wolves"),
-    ])
-    fields.append({"name": "Bullets Hit", "value": bullets_text, "inline": True})
+    ]), "inline": True})
 
-    # Header line: status flags
     status_bits = []
     if is_banned:
         status_bits.append("⛔ BANNED")
@@ -154,7 +214,10 @@ def _build_embed(profile: dict) -> dict:
     if status_bits:
         description_parts.append(" • ".join(status_bits))
     description_parts.append(f"Steam ID: `{steamid}`")
-    description_parts.append(f"[Steam Profile](https://steamcommunity.com/profiles/{steamid}) • [ruststats.io](https://ruststats.io/profile/{steamid})")
+    description_parts.append(
+        f"[Steam Profile](https://steamcommunity.com/profiles/{steamid}) • "
+        f"[ruststats.io](https://ruststats.io/profile/{steamid})"
+    )
 
     embed = {
         "title": f"🎯 {name} — Rust Stats",
@@ -175,24 +238,34 @@ def _build_embed(profile: dict) -> dict:
 
 @plugin.on_slash_command("statscheck")
 def handle_statscheck(ctx: Context, event: dict):
-    steamid = _extract_option(event, "steamid")
+    raw = _extract_option(event, "steamid")
 
-    if not steamid:
+    if not raw:
+        # Log the event keys so we can see what shape options arrive in
+        ctx.log(
+            f"statscheck: no steamid option found. event keys: {list(event.keys())} "
+            f"event preview: {json.dumps(event, default=str)[:1500]}",
+            level="warning",
+        )
         ctx.interaction.respond(
-            content="❌ Please provide a Steam ID. Example: `/statscheck steamid:76561198254115883`",
+            content=(
+                "❌ Please provide a Steam ID, profile URL, or vanity name.\n"
+                "Examples:\n"
+                "• `/statscheck 76561198254115883`\n"
+                "• `/statscheck https://steamcommunity.com/id/somename`\n"
+                "• `/statscheck somename`"
+            ),
             ephemeral=True,
         )
         return
 
-    if not STEAMID_RE.match(steamid):
-        ctx.interaction.respond(
-            content=f"❌ `{steamid}` doesn't look like a SteamID64 (17 digits).",
-            ephemeral=True,
-        )
-        return
-
-    # Fetch can take a moment; defer so we don't blow the 3s response window.
+    # Defer immediately — vanity resolution + ruststats.io call can exceed 3s
     ctx.interaction.defer()
+
+    steamid, err = _resolve_to_steamid64(ctx, raw)
+    if err:
+        ctx.interaction.followup(content=f"❌ {err}: `{raw}`", ephemeral=True)
+        return
 
     try:
         resp = ctx.http.post(
@@ -226,7 +299,7 @@ def handle_statscheck(ctx: Context, event: dict):
         return
 
     try:
-        profile = json.loads(body) if isinstance(body, str) else body
+        profile = json.loads(body) if isinstance(body, (str, bytes)) else body
     except (ValueError, TypeError) as exc:
         ctx.log(f"Failed to parse ruststats.io JSON: {exc}", level="error")
         ctx.interaction.followup(

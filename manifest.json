@@ -2,11 +2,11 @@
   "slash_commands": [
     {
       "name": "statscheck",
-      "description": "Check Rust player stats by Steam ID",
+      "description": "Check a Rust player's stats by Steam ID, profile URL, or vanity name",
       "options": [
         {
           "name": "steamid",
-          "description": "SteamID64 (17 digits, e.g. 76561198254115883)",
+          "description": "SteamID64, profile URL, or vanity name (steamcommunity.com/id/...)",
           "type": 3,
           "required": true
         }

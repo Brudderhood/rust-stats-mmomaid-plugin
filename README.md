@@ -6,11 +6,18 @@ back into Discord.
 
 ## Usage
 
-In any channel the bot is in:
+In any channel the bot is in, type `/statscheck` and Discord will prompt
+for the `steamid` argument. Any of the following work as input:
 
 ```
-/statscheck steamid:76561198254115883
+/statscheck 76561198254115883
+/statscheck https://steamcommunity.com/profiles/76561198254115883
+/statscheck https://steamcommunity.com/id/somename
+/statscheck somename
 ```
+
+Vanity names and `steamcommunity.com/id/...` URLs are auto-resolved to a
+SteamID64 via Steam's public XML endpoint (no API key required).
 
 The plugin replies with a deferred embed containing overview, PvP, kills,
 deaths, gathering, and accuracy stats — plus profile links.
@@ -28,7 +35,7 @@ deaths, gathering, and accuracy stats — plus profile links.
 3. On the upload form, declare:
 
    - **Capability:** `proxy:http`
-   - **Allowed domain:** `ruststats.io`
+   - **Allowed domains:** `ruststats.io`, `steamcommunity.com`
 
    The `/statscheck` slash command itself is declared in `manifest.json`,
    not the upload form.
