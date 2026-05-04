@@ -482,13 +482,6 @@ def handle_statscheck_chat(ctx: Context, event: dict):
 
     raw = parts[1].strip()
 
-    # Immediate ack so the user knows we received it. Resolution + fetch can
-    # take a while when the proxy quota is near-empty (we sleep + retry).
-    ctx.discord.send_message(
-        channel_id=channel_id,
-        content=f"🔍 Looking up stats for `{raw}`…",
-    )
-
     steamid, err = _resolve_to_steamid64(ctx, raw)
     if err:
         ctx.discord.send_message(channel_id=channel_id, content=f"❌ {err}: `{raw}`")
