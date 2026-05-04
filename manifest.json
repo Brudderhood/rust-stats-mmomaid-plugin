@@ -1,4 +1,9 @@
 {
+  "capabilities": [
+    "discord:send_message",
+    "events:message_content",
+    "interaction:respond"
+  ],
   "slash_commands": [
     {
       "name": "statscheck",
