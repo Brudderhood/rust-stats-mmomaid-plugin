@@ -31,6 +31,7 @@ Docs: https://mmomaid.com/dev/docs
 """
 import gzip
 import json
+import math
 import re
 import time
 
@@ -438,59 +439,65 @@ USAGE_HELP = (
 
 
 # ── Raid calculator ────────────────────────────────────────────────────────────
-# Numbers sourced from rusthelp.com item pages (May 2026). For C4/F1 entries
-# not exposed on rusthelp's wall pages, RustLabs hard-side values are used.
+# Per-unit damage values from RustLabs. Counts and sulfur match rusthelp.com,
+# and pair-wise combos (e.g. 7 C4 + 1 Rocket on an HQM wall) are solved as a
+# bounded knapsack so we surface the cheapest mix, not just pure stacks.
 
-RAID_TOOLS: list[tuple[str, int]] = [
-    # (display name, sulfur cost per unit)
-    ("Timed Explosive Charge (C4)",   2200),
-    ("Rocket",                        1400),
-    ("Satchel Charge",                 480),
-    ("Beancan Grenade",                 60),
-    ("F1 Grenade",                      30),
-    ("Explosive 5.56 Rifle Ammo",       10),
-    ("High Velocity Rocket",           100),
+RAID_TOOLS: list[dict] = [
+    # (display name, short label, emoji, sulfur cost per unit)
+    {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200},
+    {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400},
+    {"name": "Satchel Charge",              "short": "Satchel",  "emoji": "📦", "sulfur":  480},
+    {"name": "Beancan Grenade",             "short": "Beancan",  "emoji": "🥫", "sulfur":   60},
+    {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30},
+    {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10},
+    {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100},
 ]
 
+# Damage per tool against each target (calibrated so ceil(HP/dmg) reproduces
+# the count rusthelp.com shows AND mixed-tool combos check out against rusthelp's
+# recommended recipes). None = tool not viable / not listed.
+# Order: C4, Rocket, Satchel, Beancan, F1, Explo5.56, HVRocket.
 RAID_TARGETS: list[dict] = [
     {
-        "name": "Sheet Metal Door", "hp": 250,
-        "cost": [1, 1, 4, 18, 50, 63, 11],
+        "name": "Sheet Metal Door", "emoji": "🚪", "hp": 250,
+        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,    24.0],
         "aliases": ["sheetmetaldoor", "sheetdoor", "smdoor", "sheet"],
     },
     {
-        "name": "Garage Door", "hp": 600,
-        "cost": [2, 3, 9, 49, 1200, 150, None],
+        "name": "Garage Door", "emoji": "🚛", "hp": 600,
+        "damage": [1000.0, 200.0, 70.0, 12.3,    0.5,    4.0,    None],
         "aliases": ["garagedoor", "garage", "gd"],
     },
     {
-        "name": "Armored Door", "hp": 1000,
-        "cost": [3, 5, 15, 82, 200, 250, None],
+        "name": "Armored Door", "emoji": "🛡️", "hp": 1000,
+        "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,    None],
         "aliases": ["armoreddoor", "armoureddoor", "armoured", "armored", "ad"],
     },
     {
-        "name": "Stone Wall (hard side)", "hp": 500,
-        "cost": [4, 4, 10, 46, None, 185, None],
+        "name": "Stone Wall (hard side)", "emoji": "🧱", "hp": 500,
+        "damage": [125.0, 125.0,  50.0, 11.0,    None,   2.71,   None],
         "aliases": ["stonewall", "stone", "stonewallhard", "swhard", "sw"],
     },
     {
-        "name": "Stone Wall (soft side)", "hp": 500,
-        "cost": [2, 2, 5, 23, None, 93, None],
+        "name": "Stone Wall (soft side)", "emoji": "🧱", "hp": 500,
+        "damage": [275.0, 275.0, 100.0, 22.0,    None,   5.4,    None],
         "aliases": ["stonewallsoft", "softside", "sws", "stonesoft"],
     },
     {
-        "name": "Sheet Metal Wall", "hp": 1000,
-        "cost": [4, 7, 23, 131, 993, 400, None],
+        "name": "Sheet Metal Wall", "emoji": "🔩", "hp": 1000,
+        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None],
         "aliases": ["sheetmetalwall", "metalwall", "metal", "smw"],
     },
     {
-        "name": "Armored Wall (HQM)", "hp": 2000,
-        "cost": [8, 15, 46, 262, 1986, 799, None],
+        "name": "Armored Wall (HQM)", "emoji": "💎", "hp": 2000,
+        "damage": [275.0, 137.0,  44.0,  7.65,   1.0075, 2.504,  None],
         "aliases": ["armoredwall", "armouredwall", "hqmwall", "hqm", "aw"],
     },
 ]
 
 _NORM_RE = re.compile(r"[\s_\-]+")
+_DMG_EPS = 1e-6  # float tolerance when checking "did the combo cover HP?"
 
 
 def _norm(s: str) -> str:
@@ -504,7 +511,6 @@ def _find_raid_target(query: str) -> dict | None:
     for t in RAID_TARGETS:
         if _norm(t["name"]) == q or q in (_norm(a) for a in t["aliases"]):
             return t
-    # Loose contains-match — only accept if exactly one target matches.
     matches = [
         t for t in RAID_TARGETS
         if q in _norm(t["name"]) or any(q in _norm(a) for a in t["aliases"])
@@ -512,45 +518,137 @@ def _find_raid_target(query: str) -> dict | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _count_for(damage: float | None, hp: float) -> int | None:
+    if damage is None or damage <= 0:
+        return None
+    return math.ceil(hp / damage - _DMG_EPS)
+
+
+def _solve_combo(hp: float, damages: list[float | None], costs: list[int],
+                 allow: list[int] | None = None) -> tuple[int, list[tuple[int, int]]] | None:
+    """Cheapest single-tool or two-tool combo that deals >= hp damage.
+
+    Returns (total_sulfur, [(tool_idx, count), ...]) sorted by count desc, or
+    None if no viable tool exists in `allow`. `allow` restricts the tool set
+    (used to compute "explosives only" alongside an "anything" cheapest).
+    """
+    n = len(damages)
+    indices = list(range(n)) if allow is None else [i for i in allow if 0 <= i < n]
+    indices = [i for i in indices if damages[i] is not None and damages[i] > 0]
+    if not indices:
+        return None
+
+    best: tuple[int, list[tuple[int, int]]] | None = None
+
+    def consider(cost: int, parts: list[tuple[int, int]]):
+        nonlocal best
+        parts = [(i, c) for i, c in parts if c > 0]
+        if not parts:
+            return
+        if best is None or cost < best[0]:
+            best = (cost, parts)
+
+    # Single-tool baselines.
+    for i in indices:
+        c = _count_for(damages[i], hp)
+        assert c is not None
+        consider(c * costs[i], [(i, c)])
+
+    # Two-tool combos. We iterate `a` over how many of tool i we use, then
+    # take the smallest b for tool j to cover the remaining damage.
+    for i in indices:
+        max_i = _count_for(damages[i], hp) or 0
+        for j in indices:
+            if j == i:
+                continue
+            for a in range(max_i + 1):
+                rem = hp - a * damages[i]
+                if rem <= _DMG_EPS:
+                    b = 0
+                else:
+                    b = math.ceil(rem / damages[j] - _DMG_EPS)
+                cost = a * costs[i] + b * costs[j]
+                consider(cost, [(i, a), (j, b)])
+
+    if best is None:
+        return None
+    parts = sorted(best[1], key=lambda p: -p[1])
+    return best[0], parts
+
+
+def _format_combo(parts: list[tuple[int, int]], qty: int = 1) -> str:
+    # Tool order is canonical (C4 first, then Rocket, …) so the combo reads
+    # naturally regardless of how the solver discovered it.
+    parts = sorted(parts, key=lambda p: p[0])
+    return " + ".join(
+        f"{RAID_TOOLS[i]['emoji']} {RAID_TOOLS[i]['short']} ×{c * qty:,}"
+        for i, c in parts
+    )
+
+
+# Tool-set restrictions for the headline combos.
+_C4_IDX, _ROCKET_IDX, _EXPLO_IDX = 0, 1, 5
+_C4_ROCKET_IDXS = [_C4_IDX, _ROCKET_IDX]
+
+
 def _build_raid_embed(target: dict, qty: int) -> dict:
     qty = max(1, int(qty))
-    total_hp = target["hp"] * qty
+    hp = float(target["hp"])  # solve per single structure, then × qty
+    damages = list(target["damage"])
+    costs = [t["sulfur"] for t in RAID_TOOLS]
 
-    rows: list[tuple[str, int, int]] = []  # (tool, total_count, total_sulfur)
-    for (tool_name, sulfur_each), per_unit in zip(RAID_TOOLS, target["cost"]):
-        if per_unit is None:
-            continue
-        total_count = per_unit * qty
-        rows.append((tool_name, total_count, total_count * sulfur_each))
-
-    cheapest = min(rows, key=lambda r: r[2]) if rows else None
-
-    table_lines = [f"{'Tool':<32} {'Qty':>7}   {'Sulfur':>10}",
-                   "-" * 53]
-    for tool, count, sulfur in rows:
-        table_lines.append(f"{tool:<32} {count:>7,}   {sulfur:>10,}")
-    table = "```" + "\n".join(table_lines) + "```"
-
-    description_parts = [
-        f"**{target['name']}** × {qty}  ·  {total_hp:,} HP",
-        table,
+    # Single-tool table rows (counts already × qty for the user).
+    table_lines = [
+        f"{'Tool':<14} {'Qty':>7}  {'Sulfur':>10}",
+        "─" * 36,
     ]
+    for tool, dmg in zip(RAID_TOOLS, damages):
+        if dmg is None:
+            table_lines.append(f"{tool['emoji']} {tool['short']:<11} {'n/a':>7}  {'—':>10}")
+            continue
+        per = _count_for(dmg, hp) or 0
+        c = per * qty
+        s = c * tool["sulfur"]
+        table_lines.append(f"{tool['emoji']} {tool['short']:<11} {c:>7,}  {s:>10,}")
+    table = "```\n" + "\n".join(table_lines) + "\n```"
+
+    # Headline combos (each solved per single structure):
+    #   - "raid combo": cheapest mix of C4 and Rocket — what most raiders use
+    #   - "cheapest":   cheapest mix of any tool incl. ammo (often a slow grind)
+    raid_combo = _solve_combo(hp, damages, costs, allow=_C4_ROCKET_IDXS)
+    cheapest   = _solve_combo(hp, damages, costs)
+
+    lines = [
+        f"{target['emoji']} **{target['name']}**  ×{qty}  ·  **{int(hp * qty):,} HP**",
+        "",
+    ]
+    if raid_combo:
+        cost_each, parts = raid_combo
+        lines.append(f"💣 **Raid combo (C4/Rocket)** — {cost_each * qty:,} sulfur")
+        lines.append(f"   {_format_combo(parts, qty)}")
     if cheapest:
-        description_parts.append(
-            f"💰 Cheapest viable: **{cheapest[0]}** — "
-            f"{cheapest[1]:,} ({cheapest[2]:,} sulfur)"
-        )
+        cost_each, parts = cheapest
+        # Only show the bullets/throwables option if it's actually cheaper.
+        if not raid_combo or cost_each < raid_combo[0]:
+            lines.append(f"💸 **Cheapest (incl. bullets/throwables)** — {cost_each * qty:,} sulfur")
+            lines.append(f"   {_format_combo(parts, qty)}")
+
+    lines.append("")
+    lines.append("📊 **Single-tool options**")
+    lines.append(table)
 
     return {
         "title": "💥 Rust Raid Calculator",
-        "description": "\n".join(description_parts),
+        "description": "\n".join(lines),
         "color": EMBED_COLOR,
-        "footer": {"text": "Costs from rusthelp.com / RustLabs — verify against current patch"},
+        "footer": {"text": "Damage values from RustLabs · counts match rusthelp.com"},
     }
 
 
 def _raid_help_text() -> str:
-    aliases_preview = ", ".join(f"`{t['aliases'][0]}`" for t in RAID_TARGETS)
+    aliases_preview = ", ".join(
+        f"{t['emoji']} `{t['aliases'][0]}`" for t in RAID_TARGETS
+    )
     return (
         "❌ Please pick a target.\n"
         f"Examples:\n"
