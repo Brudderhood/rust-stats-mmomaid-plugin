@@ -772,16 +772,10 @@ def handle_statscheck_slash(ctx: Context, event: dict):
 @plugin.on_slash_command("raidcheck")
 def handle_raidcheck_slash(ctx: Context, event: dict):
     target_q = _extract_option(event, "target")
-    qty_raw = _extract_option(event, "quantity")
 
     if not target_q:
         ctx.interaction.respond(content=_raid_help_text(), ephemeral=True)
         return
-
-    try:
-        qty = max(1, int(qty_raw)) if qty_raw else 1
-    except (TypeError, ValueError):
-        qty = 1
 
     target = _find_raid_target(target_q)
     if not target:
@@ -791,7 +785,10 @@ def handle_raidcheck_slash(ctx: Context, event: dict):
         )
         return
 
-    ctx.interaction.respond(embeds=[_build_raid_embed(target, qty)])
+    # Slash UI always assumes a single structure — quantity is intentionally
+    # not exposed there because Discord was making the optional integer field
+    # mandatory in practice. Chat-text fallback still accepts a number suffix.
+    ctx.interaction.respond(embeds=[_build_raid_embed(target, qty=1)])
 
 
 # Chat-command prefixes — users typing the literal text in a Discord channel.

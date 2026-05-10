@@ -51,12 +51,6 @@
             { "name": "SAM Site",                   "value": "samsite" },
             { "name": "Vending Machine",            "value": "vendingmachine" }
           ]
-        },
-        {
-          "name": "quantity",
-          "description": "How many of this structure (default 1)",
-          "type": 4,
-          "required": false
         }
       ]
     }
