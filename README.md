@@ -1,39 +1,79 @@
-# Rust Stats Plugin (MMO Maid)
+# Rust Stats + Raid Plugin (MMO Maid)
 
-Adds a `/statscheck` slash command that pulls a Rust player profile from
-[ruststats.io](https://ruststats.io) by Steam ID and posts a formatted embed
-back into Discord.
+Two slash commands for Rust players in Discord:
+
+- `/statscheck` — pulls a player profile from
+  [ruststats.io](https://ruststats.io) by Steam ID and posts a formatted embed.
+- `/raidcheck` — calculates raid cost (single-tool counts and the cheapest
+  C4/Rocket combo) for a wall or door, with sulfur totals and tool icons.
 
 ## Usage
 
-Two ways to invoke it:
+### `/statscheck`
 
-**Slash command** (Discord shows the `steamid:` field — that label is part
-of Discord's UI and can't be hidden on slash commands):
+Slash command (Discord shows the `steamid:` field — that label is part of
+Discord's UI and can't be hidden):
 
 ```
 /statscheck steamid:76561198254115883
 ```
 
-**Chat command** (no labels — just the prefix and the value):
+Chat fallback (literal text, useful for paste/forward):
 
 ```
-!statscheck 76561198254115883
-!statscheck https://steamcommunity.com/profiles/76561198254115883
-!statscheck https://steamcommunity.com/id/somename
-!statscheck somename
+/statscheck 76561198254115883
+/statscheck https://steamcommunity.com/profiles/76561198254115883
+/statscheck https://steamcommunity.com/id/somename
+/statscheck somename
 ```
 
-`?statscheck` and `.statscheck` work as alternate prefixes. Vanity names and
-`steamcommunity.com/id/...` URLs are auto-resolved to a SteamID64 via
-Steam's public XML endpoint (no API key required).
+Vanity names and `steamcommunity.com/id/...` URLs are auto-resolved to a
+SteamID64 via Steam's public XML endpoint (no API key required).
 
-Either invocation returns an embed with overview, PvP, kills, deaths,
-gathering, and accuracy stats — plus links back to Steam and ruststats.io.
+### `/raidcheck`
+
+```
+/raidcheck target:hqmwall
+/raidcheck target:armoreddoor quantity:4
+/raidcheck target:stonewall
+```
+
+Chat fallback:
+
+```
+/raidcheck hqmwall
+/raidcheck armoreddoor 4
+/raidcheck garagedoor 2
+```
+
+Targets (case/space/dash-insensitive aliases accepted):
+
+| Target                   | Aliases                                     |
+| ------------------------ | ------------------------------------------- |
+| Sheet Metal Door         | `sheetdoor`, `smdoor`, `sheet`              |
+| Garage Door              | `garagedoor`, `garage`, `gd`                |
+| Armored Door             | `armoreddoor`, `armoured`, `armored`, `ad`  |
+| Stone Wall (hard side)   | `stonewall`, `stone`, `swhard`, `sw`        |
+| Stone Wall (soft side)   | `stonewallsoft`, `softside`, `sws`          |
+| Sheet Metal Wall         | `metalwall`, `sheetmetalwall`, `metal`, `smw` |
+| Armored Wall (HQM)       | `hqmwall`, `hqm`, `armoredwall`, `aw`       |
+
+The embed shows:
+
+- 💣 **Raid combo (C4/Rocket)** — the cheapest 1- or 2-tool mix using C4
+  and/or Rocket (e.g. HQM wall = `7 C4 + 1 Rocket = 16,800 sulfur`).
+- 💸 **Cheapest (incl. bullets/throwables)** — only shown when bullets or
+  throwables actually beat the C4/Rocket combo (often a slow grind).
+- 📊 **Single-tool options table** — count and sulfur for every viable tool.
+
+Damage values are calibrated against [rusthelp.com](https://rusthelp.com).
+If a future patch changes a tool's damage, edit only the affected
+target's `damage` array in `RAID_TARGETS`.
 
 ## Packaging & uploading
 
-1. Zip the plugin folder (do **not** include `sdk_extracted/` or the `.whl`):
+1. Zip the plugin folder (do **not** include `sdk_extracted/`, `.whl`, or
+   `script.py`):
 
    ```powershell
    Compress-Archive -Path __main__.py,manifest.json,requirements.txt,README.md -DestinationPath rust_stats_plugin.zip -Force
@@ -45,20 +85,24 @@ gathering, and accuracy stats — plus links back to Steam and ruststats.io.
 
    - **Capabilities:**
      - `proxy:http` (allowed domains: `ruststats.io`, `steamcommunity.com`)
-     - `discord:send_message` (for `!statscheck` chat replies)
-     - `events:message_content` (to read the message text)
+     - `discord:send_message` (for chat-text replies)
+     - `events:message_content` (to read `/statscheck` and `/raidcheck` text)
 
-   The `/statscheck` slash command itself is declared in `manifest.json`,
-   not the upload form.
+   The `/statscheck` and `/raidcheck` slash commands are declared in
+   `manifest.json`, not the upload form.
 
 4. Click **Submit for Review**.
+
+> The running Discord bot serves whatever zip is currently published in the
+> portal — pushing to git alone does **not** update the bot. Re-upload
+> after every code change.
 
 ## Files
 
 ```
 rust_stats_plugin/
-├── __main__.py        Entry point — slash command handler
-├── manifest.json      Declares the /statscheck slash command
+├── __main__.py        Entry point — slash + chat handlers, raid calculator
+├── manifest.json      Declares /statscheck and /raidcheck slash commands
 ├── requirements.txt   SDK dependency
 └── README.md          This file
 ```
