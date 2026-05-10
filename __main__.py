@@ -445,6 +445,8 @@ USAGE_HELP = (
 
 RAID_TOOLS: list[dict] = [
     # (display name, short label, emoji, sulfur cost per unit)
+    # Molotov / Fire Arrow have no sulfur in their recipe; they're listed
+    # as 0 so wood-tier targets surface them as the genuine cheapest raid.
     {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200},
     {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400},
     {"name": "Satchel Charge",              "short": "Satchel",  "emoji": "📦", "sulfur":  480},
@@ -452,6 +454,8 @@ RAID_TOOLS: list[dict] = [
     {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30},
     {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10},
     {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100},
+    {"name": "Molotov Cocktail",            "short": "Molotov",  "emoji": "🔥", "sulfur":    0},
+    {"name": "Fire Arrow",                  "short": "FireArrow","emoji": "🏹", "sulfur":    0},
 ]
 
 # Damage per tool against each target (calibrated so ceil(HP/dmg) reproduces
@@ -459,124 +463,107 @@ RAID_TOOLS: list[dict] = [
 # recommended recipes). None = tool not viable / not listed.
 # Order: C4, Rocket, Satchel, Beancan, F1, Explo5.56, HVRocket.
 RAID_TARGETS: list[dict] = [
+    # damage array order: C4, Rocket, Satchel, Beancan, F1, Explo556,
+    # HVRocket, Molotov, FireArrow. Use None for tools that don't apply
+    # (e.g. fire vs stone/metal); rows with None are hidden in the embed.
     # ── Doors ─────────────────────────────────────────────────────────────
     {
         "name": "Wooden Door", "emoji": "🚪", "hp": 200,
-        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0],
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0,  200.0,  40.0],
         "aliases": ["woodendoor", "wooddoor", "wd"],
     },
     {
         "name": "Wood Double Door", "emoji": "🚪", "hp": 200,
-        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0],
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0,  200.0,  40.0],
         "aliases": ["wooddoubledoor", "woodendoubledoor", "wdd"],
     },
     {
         "name": "Sheet Metal Door", "emoji": "🚪", "hp": 250,
-        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0],
+        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0,    None,   None],
         "aliases": ["sheetmetaldoor", "sheetdoor", "smdoor", "sheet"],
     },
     {
         "name": "Sheet Metal Double Door", "emoji": "🚪", "hp": 250,
-        "damage": [275.0, 275.0,  70.0, 12.0,    5.0,    4.0,   24.0],
+        "damage": [275.0, 275.0,  70.0, 12.0,    5.0,    4.0,   24.0,    None,   None],
         "aliases": ["sheetmetaldoubledoor", "smdd", "metaldoubledoor"],
     },
     {
         "name": "Garage Door", "emoji": "🚛", "hp": 600,
-        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,   None],
+        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,   None,    None,   None],
         "aliases": ["garagedoor", "garage", "gd"],
     },
     {
         "name": "Armored Door", "emoji": "🛡️", "hp": 1000,
-        "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,   None],
+        "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,   None,    None,   None],
         "aliases": ["armoreddoor", "armoureddoor", "armoured", "armored", "ad"],
     },
     {
         "name": "Armored Double Door", "emoji": "🛡️", "hp": 1000,
-        "damage": [400.0, 200.0,  70.0, 14.5,    5.0,    4.0,   24.0],
+        "damage": [400.0, 200.0,  70.0, 14.5,    5.0,    4.0,   24.0,    None,   None],
         "aliases": ["armoreddoubledoor", "armoureddoubledoor", "add"],
     },
     {
         "name": "Ladder Hatch", "emoji": "🪜", "hp": 250,
-        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0],
+        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0,    None,   None],
         "aliases": ["ladderhatch", "hatch", "lh"],
     },
     # ── Walls ─────────────────────────────────────────────────────────────
     {
         "name": "Wooden Wall", "emoji": "🪵", "hp": 250,
-        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   5.32,  50.0],
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   5.32,  50.0,   200.0,   40.0],
         "aliases": ["woodenwall", "woodwall", "ww"],
     },
     {
         "name": "Stone Wall (hard side)", "emoji": "🧱", "hp": 500,
-        "damage": [125.0, 125.0,  50.0, 11.0,    None,   2.71,   None],
+        "damage": [125.0, 125.0,  50.0, 11.0,    None,   2.71,   None,   None,   None],
         "aliases": ["stonewall", "stone", "stonewallhard", "swhard", "sw"],
     },
     {
         "name": "Stone Wall (soft side)", "emoji": "🧱", "hp": 500,
-        "damage": [275.0, 275.0, 100.0, 22.0,    None,   5.4,    None],
+        "damage": [275.0, 275.0, 100.0, 22.0,    None,   5.4,    None,   None,   None],
         "aliases": ["stonewallsoft", "softside", "sws", "stonesoft"],
     },
     {
         "name": "Sheet Metal Wall", "emoji": "🔩", "hp": 1000,
-        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None],
+        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None,   None,   None],
         "aliases": ["sheetmetalwall", "metalwall", "metal", "smw"],
     },
     {
         "name": "Armored Wall (HQM)", "emoji": "💎", "hp": 2000,
-        "damage": [275.0, 137.0,  44.0,  7.65,   1.0075, 2.504,  None],
+        "damage": [275.0, 137.0,  44.0,  7.65,   1.0075, 2.504,  None,   None,   None],
         "aliases": ["armoredwall", "armouredwall", "hqmwall", "hqm", "aw"],
     },
     # ── Compound / external ───────────────────────────────────────────────
     {
         "name": "High External Wooden Wall", "emoji": "🌲", "hp": 500,
-        "damage": [1000.0, 250.0,  84.0, 30.0,   None,   6.0,    None],
+        "damage": [1000.0, 250.0,  84.0, 30.0,   None,   6.0,    None,  200.0,   40.0],
         "aliases": ["highexternalwoodwall", "highextwoodwall", "hewoodwall", "hewood"],
     },
     {
         "name": "High External Stone Wall", "emoji": "⛰️", "hp": 500,
-        "damage": [250.0, 125.0,  50.0, 11.0,    2.75,   2.9,   16.0],
+        "damage": [250.0, 125.0,  50.0, 11.0,    2.75,   2.9,   16.0,    None,   None],
         "aliases": ["highexternalstonewall", "highextstonewall", "hestonewall", "hestone"],
     },
     # ── Deployables ───────────────────────────────────────────────────────
     {
         "name": "Tool Cupboard", "emoji": "🛠️", "hp": 1000,
-        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None],
+        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None,   None,   None],
         "aliases": ["toolcupboard", "tc", "cupboard"],
     },
     {
         "name": "Auto Turret", "emoji": "🔫", "hp": 1000,
-        "damage": [500.0, 334.0, 250.0, 50.0,  100.0,    9.5,  334.0],
+        "damage": [500.0, 334.0, 250.0, 50.0,  100.0,    9.5,  334.0,    None,   None],
         "aliases": ["autoturret", "turret", "at"],
     },
     {
         "name": "SAM Site", "emoji": "📡", "hp": 1000,
-        "damage": [500.0, 334.0, 250.0, 62.5,   50.0,    6.76, 30.0],
+        "damage": [500.0, 334.0, 250.0, 62.5,   50.0,    6.76, 30.0,     None,   None],
         "aliases": ["samsite", "sam"],
     },
     {
-        "name": "Locker", "emoji": "🗄️", "hp": 500,
-        "damage": [500.0, 250.0, 100.0, 30.0,   72.0,   10.21, 167.0],
-        "aliases": ["locker"],
-    },
-    {
         "name": "Vending Machine", "emoji": "🏪", "hp": 1250,
-        "damage": [250.0, 139.0,  44.0,  9.0,    1.008,  2.51, 14.9],
+        "damage": [250.0, 139.0,  44.0,  9.0,    1.008,  2.51, 14.9,     None,   None],
         "aliases": ["vendingmachine", "vending", "vm"],
-    },
-    {
-        "name": "Large Wood Box", "emoji": "📦", "hp": 300,
-        "damage": [1000.0, 600.0, 210.0, 30.0,  75.0,   10.0, 150.0],
-        "aliases": ["largewoodbox", "largebox", "lwb"],
-    },
-    {
-        "name": "Wood Storage Box", "emoji": "📦", "hp": 150,
-        "damage": [1000.0, 600.0, 210.0, 30.0,  75.0,   10.0, 150.0],
-        "aliases": ["woodstoragebox", "woodbox", "smallbox", "wsb"],
-    },
-    {
-        "name": "Furnace", "emoji": "🔥", "hp": 500,
-        "damage": [500.0, 250.0, 100.0, 25.0,   55.5,   10.21, 50.0],
-        "aliases": ["furnace"],
     },
 ]
 
@@ -681,14 +668,15 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     damages = list(target["damage"])
     costs = [t["sulfur"] for t in RAID_TOOLS]
 
-    # Single-tool table rows (counts already × qty for the user).
+    # Single-tool table rows (counts already × qty). Tools with damage=None
+    # against this target are skipped entirely — no point showing rows that
+    # always read "n/a / —".
     table_lines = [
         f"{'Tool':<14} {'Qty':>7}  {'Sulfur':>10}",
         "─" * 36,
     ]
     for tool, dmg in zip(RAID_TOOLS, damages):
         if dmg is None:
-            table_lines.append(f"{tool['emoji']} {tool['short']:<11} {'n/a':>7}  {'—':>10}")
             continue
         per = _count_for(dmg, hp) or 0
         c = per * qty
@@ -717,7 +705,7 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     if cheapest and (not raid_combo or cheapest[0] < raid_combo[0]):
         cost_each, parts = cheapest
         fields.append({
-            "name": "💸 Cheapest (incl. bullets/throwables)",
+            "name": "💸 Cheapest overall",
             "value": f"{_format_combo(parts, qty)}\nTotal: **{cost_each * qty:,} sulfur**",
             "inline": False,
         })
