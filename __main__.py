@@ -772,14 +772,22 @@ def handle_statscheck_slash(ctx: Context, event: dict):
 @plugin.on_slash_command("raidcheck")
 def handle_raidcheck_slash(ctx: Context, event: dict):
     target_q = _extract_option(event, "target")
+    ctx.log(f"raidcheck: target_q={target_q!r}, event_keys={list(event.keys())}")
 
     if not target_q:
+        ctx.log("raidcheck: no target, sending help", level="warning")
         ctx.interaction.respond(content=_raid_help_text(), ephemeral=True)
         return
 
+    # Defer immediately so the 3-second interaction window doesn't expire
+    # while we resolve aliases / solve combos / build the embed. Followup
+    # gives us up to 15 minutes to send the real response.
+    ctx.interaction.defer()
+
     target = _find_raid_target(target_q)
     if not target:
-        ctx.interaction.respond(
+        ctx.log(f"raidcheck: target not found for {target_q!r}", level="warning")
+        ctx.interaction.followup(
             content=f"❌ Unknown target `{target_q}`.\n{_raid_help_text()}",
             ephemeral=True,
         )
@@ -788,7 +796,18 @@ def handle_raidcheck_slash(ctx: Context, event: dict):
     # Slash UI always assumes a single structure — quantity is intentionally
     # not exposed there because Discord was making the optional integer field
     # mandatory in practice. Chat-text fallback still accepts a number suffix.
-    ctx.interaction.respond(embeds=[_build_raid_embed(target, qty=1)])
+    try:
+        embed = _build_raid_embed(target, qty=1)
+    except Exception as exc:
+        ctx.log(f"raidcheck: embed build failed: {type(exc).__name__}: {exc!r}", level="error")
+        ctx.interaction.followup(
+            content=f"⚠️ Couldn't build the raid table for `{target['name']}`. ({exc})",
+            ephemeral=True,
+        )
+        return
+
+    ctx.interaction.followup(embeds=[embed])
+    ctx.log(f"raidcheck: ok for {target['name']}")
 
 
 # Chat-command prefixes — users typing the literal text in a Discord channel.
