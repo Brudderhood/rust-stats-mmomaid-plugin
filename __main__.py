@@ -537,6 +537,47 @@ RAID_TARGETS: list[dict] = [
         "damage": [250.0, 125.0,  50.0, 11.0,    2.75,   2.9,   16.0],
         "aliases": ["highexternalstonewall", "highextstonewall", "hestonewall", "hestone"],
     },
+    # ── Deployables ───────────────────────────────────────────────────────
+    {
+        "name": "Tool Cupboard", "emoji": "🛠️", "hp": 1000,
+        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None],
+        "aliases": ["toolcupboard", "tc", "cupboard"],
+    },
+    {
+        "name": "Auto Turret", "emoji": "🔫", "hp": 1000,
+        "damage": [500.0, 334.0, 250.0, 50.0,  100.0,    9.5,  334.0],
+        "aliases": ["autoturret", "turret", "at"],
+    },
+    {
+        "name": "SAM Site", "emoji": "📡", "hp": 1000,
+        "damage": [500.0, 334.0, 250.0, 62.5,   50.0,    6.76, 30.0],
+        "aliases": ["samsite", "sam"],
+    },
+    {
+        "name": "Locker", "emoji": "🗄️", "hp": 500,
+        "damage": [500.0, 250.0, 100.0, 30.0,   72.0,   10.21, 167.0],
+        "aliases": ["locker"],
+    },
+    {
+        "name": "Vending Machine", "emoji": "🏪", "hp": 1250,
+        "damage": [250.0, 139.0,  44.0,  9.0,    1.008,  2.51, 14.9],
+        "aliases": ["vendingmachine", "vending", "vm"],
+    },
+    {
+        "name": "Large Wood Box", "emoji": "📦", "hp": 300,
+        "damage": [1000.0, 600.0, 210.0, 30.0,  75.0,   10.0, 150.0],
+        "aliases": ["largewoodbox", "largebox", "lwb"],
+    },
+    {
+        "name": "Wood Storage Box", "emoji": "📦", "hp": 150,
+        "damage": [1000.0, 600.0, 210.0, 30.0,  75.0,   10.0, 150.0],
+        "aliases": ["woodstoragebox", "woodbox", "smallbox", "wsb"],
+    },
+    {
+        "name": "Furnace", "emoji": "🔥", "hp": 500,
+        "damage": [500.0, 250.0, 100.0, 25.0,   55.5,   10.21, 50.0],
+        "aliases": ["furnace"],
+    },
 ]
 
 _NORM_RE = re.compile(r"[\s_\-]+")
@@ -661,32 +702,40 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     raid_combo = _solve_combo(hp, damages, costs, allow=_C4_ROCKET_IDXS)
     cheapest   = _solve_combo(hp, damages, costs)
 
-    lines = [
-        f"{target['emoji']} **{target['name']}**  ×{qty}  ·  **{int(hp * qty):,} HP**",
-        "",
-    ]
+    # Discord renders embed `fields` with real visual separation, which is
+    # what we want — putting these inside the description squashes them.
+    fields: list[dict] = []
+
     if raid_combo:
         cost_each, parts = raid_combo
-        lines.append(f"💣 **Raid combo (C4/Rocket)**")
-        lines.append(f"> {_format_combo(parts, qty)}")
-        lines.append(f"> Total: **{cost_each * qty:,} sulfur**")
-        lines.append("")
-    if cheapest:
-        cost_each, parts = cheapest
-        # Only show the bullets/throwables option if it's actually cheaper.
-        if not raid_combo or cost_each < raid_combo[0]:
-            lines.append(f"💸 **Cheapest (incl. bullets/throwables)**")
-            lines.append(f"> {_format_combo(parts, qty)}")
-            lines.append(f"> Total: **{cost_each * qty:,} sulfur**")
-            lines.append("")
+        fields.append({
+            "name": "💣 Raid combo (C4/Rocket)",
+            "value": f"{_format_combo(parts, qty)}\nTotal: **{cost_each * qty:,} sulfur**",
+            "inline": False,
+        })
 
-    lines.append("📊 **Single-tool options**")
-    lines.append(table)
+    if cheapest and (not raid_combo or cheapest[0] < raid_combo[0]):
+        cost_each, parts = cheapest
+        fields.append({
+            "name": "💸 Cheapest (incl. bullets/throwables)",
+            "value": f"{_format_combo(parts, qty)}\nTotal: **{cost_each * qty:,} sulfur**",
+            "inline": False,
+        })
+
+    fields.append({
+        "name": "📊 Single-tool options",
+        "value": table,
+        "inline": False,
+    })
 
     return {
         "title": "💥 Rust Raid Calculator",
-        "description": "\n".join(lines),
+        "description": (
+            f"{target['emoji']} **{target['name']}**  ×{qty}  ·  "
+            f"**{int(hp * qty):,} HP**"
+        ),
         "color": EMBED_COLOR,
+        "fields": fields,
     }
 
 
