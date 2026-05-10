@@ -1,24 +1,31 @@
 """
-Rust Stats Plugin
-=================
+Rust Stats + Raid Plugin
+========================
 
-Two ways to look up a Rust player's stats from ruststats.io:
+Slash commands:
+  /statscheck steamid:<value>          look up a player's ruststats.io profile
+  /raidcheck  target:<id> [quantity:N] raid-cost table for a wall or door
 
-  1. Slash command:   /statscheck steamid:<value>
-  2. Chat command:    !statscheck <value>
+Chat commands (mirrors of the slash commands, for users who type literal text):
+  /statscheck <value>
+  /raidcheck  <target> [quantity]
 
-Accepted input forms (any of these work for either command):
+Accepted statscheck input forms:
   - SteamID64               76561198254115883
   - Profile URL             https://steamcommunity.com/profiles/7656...
   - Vanity URL              https://steamcommunity.com/id/somename
   - Vanity name             somename
 
+Raidcheck targets (case/space/dash-insensitive, common aliases accepted):
+  sheetdoor, garagedoor, armoreddoor,
+  stonewall (hard), stonewallsoft, metalwall, hqmwall
+
 Capabilities required:
   - proxy:http               (allowed domains: ruststats.io, steamcommunity.com)
   - discord:send_message     (for chat-command replies)
-  - events:message_content   (to read !statscheck messages)
+  - events:message_content   (to read /statscheck and /raidcheck messages)
 
-Slash command is declared in manifest.json.
+Slash commands declared in manifest.json.
 
 Docs: https://mmomaid.com/dev/docs
 """
@@ -424,10 +431,134 @@ def _fetch_profile(ctx: Context, steamid: str) -> tuple[dict | None, str | None]
 USAGE_HELP = (
     "❌ Please provide a Steam ID, profile URL, or vanity name.\n"
     "Examples:\n"
-    "• `!statscheck 76561198254115883`\n"
-    "• `!statscheck https://steamcommunity.com/id/somename`\n"
-    "• `!statscheck somename`"
+    "• `/statscheck 76561198254115883`\n"
+    "• `/statscheck https://steamcommunity.com/id/somename`\n"
+    "• `/statscheck somename`"
 )
+
+
+# ── Raid calculator ────────────────────────────────────────────────────────────
+# Numbers sourced from rusthelp.com item pages (May 2026). For C4/F1 entries
+# not exposed on rusthelp's wall pages, RustLabs hard-side values are used.
+
+RAID_TOOLS: list[tuple[str, int]] = [
+    # (display name, sulfur cost per unit)
+    ("Timed Explosive Charge (C4)",   2200),
+    ("Rocket",                        1400),
+    ("Satchel Charge",                 480),
+    ("Beancan Grenade",                 60),
+    ("F1 Grenade",                      30),
+    ("Explosive 5.56 Rifle Ammo",       10),
+    ("High Velocity Rocket",           100),
+]
+
+RAID_TARGETS: list[dict] = [
+    {
+        "name": "Sheet Metal Door", "hp": 250,
+        "cost": [1, 1, 4, 18, 50, 63, 11],
+        "aliases": ["sheetmetaldoor", "sheetdoor", "smdoor", "sheet"],
+    },
+    {
+        "name": "Garage Door", "hp": 600,
+        "cost": [2, 3, 9, 49, 1200, 150, None],
+        "aliases": ["garagedoor", "garage", "gd"],
+    },
+    {
+        "name": "Armored Door", "hp": 1000,
+        "cost": [3, 5, 15, 82, 200, 250, None],
+        "aliases": ["armoreddoor", "armoureddoor", "armoured", "armored", "ad"],
+    },
+    {
+        "name": "Stone Wall (hard side)", "hp": 500,
+        "cost": [4, 4, 10, 46, None, 185, None],
+        "aliases": ["stonewall", "stone", "stonewallhard", "swhard", "sw"],
+    },
+    {
+        "name": "Stone Wall (soft side)", "hp": 500,
+        "cost": [2, 2, 5, 23, None, 93, None],
+        "aliases": ["stonewallsoft", "softside", "sws", "stonesoft"],
+    },
+    {
+        "name": "Sheet Metal Wall", "hp": 1000,
+        "cost": [4, 7, 23, 131, 993, 400, None],
+        "aliases": ["sheetmetalwall", "metalwall", "metal", "smw"],
+    },
+    {
+        "name": "Armored Wall (HQM)", "hp": 2000,
+        "cost": [8, 15, 46, 262, 1986, 799, None],
+        "aliases": ["armoredwall", "armouredwall", "hqmwall", "hqm", "aw"],
+    },
+]
+
+_NORM_RE = re.compile(r"[\s_\-]+")
+
+
+def _norm(s: str) -> str:
+    return _NORM_RE.sub("", s.strip().lower())
+
+
+def _find_raid_target(query: str) -> dict | None:
+    q = _norm(query)
+    if not q:
+        return None
+    for t in RAID_TARGETS:
+        if _norm(t["name"]) == q or q in (_norm(a) for a in t["aliases"]):
+            return t
+    # Loose contains-match — only accept if exactly one target matches.
+    matches = [
+        t for t in RAID_TARGETS
+        if q in _norm(t["name"]) or any(q in _norm(a) for a in t["aliases"])
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _build_raid_embed(target: dict, qty: int) -> dict:
+    qty = max(1, int(qty))
+    total_hp = target["hp"] * qty
+
+    rows: list[tuple[str, int, int]] = []  # (tool, total_count, total_sulfur)
+    for (tool_name, sulfur_each), per_unit in zip(RAID_TOOLS, target["cost"]):
+        if per_unit is None:
+            continue
+        total_count = per_unit * qty
+        rows.append((tool_name, total_count, total_count * sulfur_each))
+
+    cheapest = min(rows, key=lambda r: r[2]) if rows else None
+
+    table_lines = [f"{'Tool':<32} {'Qty':>7}   {'Sulfur':>10}",
+                   "-" * 53]
+    for tool, count, sulfur in rows:
+        table_lines.append(f"{tool:<32} {count:>7,}   {sulfur:>10,}")
+    table = "```" + "\n".join(table_lines) + "```"
+
+    description_parts = [
+        f"**{target['name']}** × {qty}  ·  {total_hp:,} HP",
+        table,
+    ]
+    if cheapest:
+        description_parts.append(
+            f"💰 Cheapest viable: **{cheapest[0]}** — "
+            f"{cheapest[1]:,} ({cheapest[2]:,} sulfur)"
+        )
+
+    return {
+        "title": "💥 Rust Raid Calculator",
+        "description": "\n".join(description_parts),
+        "color": EMBED_COLOR,
+        "footer": {"text": "Costs from rusthelp.com / RustLabs — verify against current patch"},
+    }
+
+
+def _raid_help_text() -> str:
+    aliases_preview = ", ".join(f"`{t['aliases'][0]}`" for t in RAID_TARGETS)
+    return (
+        "❌ Please pick a target.\n"
+        f"Examples:\n"
+        f"• `/raidcheck stonewall`\n"
+        f"• `/raidcheck armoreddoor 4`\n"
+        f"• `/raidcheck hqmwall 2`\n"
+        f"\nValid targets: {aliases_preview}"
+    )
 
 
 @plugin.on_slash_command("statscheck")
@@ -458,33 +589,44 @@ def handle_statscheck_slash(ctx: Context, event: dict):
     ctx.interaction.followup(embeds=[_build_embed(profile)])
 
 
-CHAT_PREFIXES = ("!statscheck", "?statscheck", ".statscheck")
+@plugin.on_slash_command("raidcheck")
+def handle_raidcheck_slash(ctx: Context, event: dict):
+    target_q = _extract_option(event, "target")
+    qty_raw = _extract_option(event, "quantity")
 
-
-@plugin.on_event("message_create")
-def handle_statscheck_chat(ctx: Context, event: dict):
-    content = (event.get("content") or "").strip()
-    if not content:
+    if not target_q:
+        ctx.interaction.respond(content=_raid_help_text(), ephemeral=True)
         return
 
-    parts = content.split(None, 1)
-    cmd = parts[0].lower()
-    if cmd not in CHAT_PREFIXES:
+    try:
+        qty = max(1, int(qty_raw)) if qty_raw else 1
+    except (TypeError, ValueError):
+        qty = 1
+
+    target = _find_raid_target(target_q)
+    if not target:
+        ctx.interaction.respond(
+            content=f"❌ Unknown target `{target_q}`.\n{_raid_help_text()}",
+            ephemeral=True,
+        )
         return
 
-    channel_id = event.get("channel_id")
-    if not channel_id:
-        return
+    ctx.interaction.respond(embeds=[_build_raid_embed(target, qty)])
 
-    if len(parts) < 2 or not parts[1].strip():
+
+# Chat-command prefixes — users typing the literal text in a Discord channel.
+STATSCHECK_PREFIXES = ("/statscheck",)
+RAIDCHECK_PREFIXES  = ("/raidcheck",)
+
+
+def _do_statscheck_chat(ctx: Context, channel_id: str, args: str):
+    if not args:
         ctx.discord.send_message(channel_id=channel_id, content=USAGE_HELP)
         return
 
-    raw = parts[1].strip()
-
-    steamid, err = _resolve_to_steamid64(ctx, raw)
+    steamid, err = _resolve_to_steamid64(ctx, args)
     if err:
-        ctx.discord.send_message(channel_id=channel_id, content=f"❌ {err}: `{raw}`")
+        ctx.discord.send_message(channel_id=channel_id, content=f"❌ {err}: `{args}`")
         return
 
     profile, err = _fetch_profile(ctx, steamid)
@@ -493,6 +635,50 @@ def handle_statscheck_chat(ctx: Context, event: dict):
         return
 
     ctx.discord.send_message(channel_id=channel_id, embeds=[_build_embed(profile)])
+
+
+def _do_raidcheck_chat(ctx: Context, channel_id: str, args: str):
+    tokens = args.split()
+    if not tokens:
+        ctx.discord.send_message(channel_id=channel_id, content=_raid_help_text())
+        return
+
+    qty = 1
+    if len(tokens) >= 2 and tokens[-1].isdigit():
+        qty = max(1, int(tokens[-1]))
+        target_query = " ".join(tokens[:-1])
+    else:
+        target_query = " ".join(tokens)
+
+    target = _find_raid_target(target_query)
+    if not target:
+        ctx.discord.send_message(
+            channel_id=channel_id,
+            content=f"❌ Unknown target `{target_query}`.\n{_raid_help_text()}",
+        )
+        return
+
+    ctx.discord.send_message(channel_id=channel_id, embeds=[_build_raid_embed(target, qty)])
+
+
+@plugin.on_event("message_create")
+def handle_message_create(ctx: Context, event: dict):
+    content = (event.get("content") or "").strip()
+    if not content:
+        return
+
+    parts = content.split(None, 1)
+    cmd = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    channel_id = event.get("channel_id")
+    if not channel_id:
+        return
+
+    if cmd in STATSCHECK_PREFIXES:
+        _do_statscheck_chat(ctx, channel_id, rest)
+    elif cmd in RAIDCHECK_PREFIXES:
+        _do_raidcheck_chat(ctx, channel_id, rest)
 
 
 # ── This must be the last line ────────────────────────────────────────────────

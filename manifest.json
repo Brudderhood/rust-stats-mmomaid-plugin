@@ -16,6 +16,33 @@
           "required": true
         }
       ]
+    },
+    {
+      "name": "raidcheck",
+      "description": "Calculate raid cost for a Rust wall or door",
+      "options": [
+        {
+          "name": "target",
+          "description": "Structure to raid",
+          "type": 3,
+          "required": true,
+          "choices": [
+            { "name": "Sheet Metal Door",       "value": "sheetdoor" },
+            { "name": "Garage Door",            "value": "garagedoor" },
+            { "name": "Armored Door",           "value": "armoreddoor" },
+            { "name": "Stone Wall (hard side)", "value": "stonewall" },
+            { "name": "Stone Wall (soft side)", "value": "stonewallsoft" },
+            { "name": "Sheet Metal Wall",       "value": "metalwall" },
+            { "name": "Armored Wall (HQM)",     "value": "hqmwall" }
+          ]
+        },
+        {
+          "name": "quantity",
+          "description": "How many of this structure (default 1)",
+          "type": 4,
+          "required": false
+        }
+      ]
     }
   ]
 }
