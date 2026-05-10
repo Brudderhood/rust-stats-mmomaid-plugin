@@ -459,20 +459,52 @@ RAID_TOOLS: list[dict] = [
 # recommended recipes). None = tool not viable / not listed.
 # Order: C4, Rocket, Satchel, Beancan, F1, Explo5.56, HVRocket.
 RAID_TARGETS: list[dict] = [
+    # ── Doors ─────────────────────────────────────────────────────────────
+    {
+        "name": "Wooden Door", "emoji": "🚪", "hp": 200,
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0],
+        "aliases": ["woodendoor", "wooddoor", "wd"],
+    },
+    {
+        "name": "Wood Double Door", "emoji": "🚪", "hp": 200,
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0],
+        "aliases": ["wooddoubledoor", "woodendoubledoor", "wdd"],
+    },
     {
         "name": "Sheet Metal Door", "emoji": "🚪", "hp": 250,
-        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,    24.0],
+        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0],
         "aliases": ["sheetmetaldoor", "sheetdoor", "smdoor", "sheet"],
     },
     {
+        "name": "Sheet Metal Double Door", "emoji": "🚪", "hp": 250,
+        "damage": [275.0, 275.0,  70.0, 12.0,    5.0,    4.0,   24.0],
+        "aliases": ["sheetmetaldoubledoor", "smdd", "metaldoubledoor"],
+    },
+    {
         "name": "Garage Door", "emoji": "🚛", "hp": 600,
-        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,    None],
+        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,   None],
         "aliases": ["garagedoor", "garage", "gd"],
     },
     {
         "name": "Armored Door", "emoji": "🛡️", "hp": 1000,
-        "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,    None],
+        "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,   None],
         "aliases": ["armoreddoor", "armoureddoor", "armoured", "armored", "ad"],
+    },
+    {
+        "name": "Armored Double Door", "emoji": "🛡️", "hp": 1000,
+        "damage": [400.0, 200.0,  70.0, 14.5,    5.0,    4.0,   24.0],
+        "aliases": ["armoreddoubledoor", "armoureddoubledoor", "add"],
+    },
+    {
+        "name": "Ladder Hatch", "emoji": "🪜", "hp": 250,
+        "damage": [275.0, 275.0,  70.0, 14.0,    5.0,    4.0,   24.0],
+        "aliases": ["ladderhatch", "hatch", "lh"],
+    },
+    # ── Walls ─────────────────────────────────────────────────────────────
+    {
+        "name": "Wooden Wall", "emoji": "🪵", "hp": 250,
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   5.32,  50.0],
+        "aliases": ["woodenwall", "woodwall", "ww"],
     },
     {
         "name": "Stone Wall (hard side)", "emoji": "🧱", "hp": 500,
@@ -493,6 +525,17 @@ RAID_TARGETS: list[dict] = [
         "name": "Armored Wall (HQM)", "emoji": "💎", "hp": 2000,
         "damage": [275.0, 137.0,  44.0,  7.65,   1.0075, 2.504,  None],
         "aliases": ["armoredwall", "armouredwall", "hqmwall", "hqm", "aw"],
+    },
+    # ── Compound / external ───────────────────────────────────────────────
+    {
+        "name": "High External Wooden Wall", "emoji": "🌲", "hp": 500,
+        "damage": [1000.0, 250.0,  84.0, 30.0,   None,   6.0,    None],
+        "aliases": ["highexternalwoodwall", "highextwoodwall", "hewoodwall", "hewood"],
+    },
+    {
+        "name": "High External Stone Wall", "emoji": "⛰️", "hp": 500,
+        "damage": [250.0, 125.0,  50.0, 11.0,    2.75,   2.9,   16.0],
+        "aliases": ["highexternalstonewall", "highextstonewall", "hestonewall", "hestone"],
     },
 ]
 
@@ -624,16 +667,19 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     ]
     if raid_combo:
         cost_each, parts = raid_combo
-        lines.append(f"💣 **Raid combo (C4/Rocket)** — {cost_each * qty:,} sulfur")
-        lines.append(f"   {_format_combo(parts, qty)}")
+        lines.append(f"💣 **Raid combo (C4/Rocket)**")
+        lines.append(f"> {_format_combo(parts, qty)}")
+        lines.append(f"> Total: **{cost_each * qty:,} sulfur**")
+        lines.append("")
     if cheapest:
         cost_each, parts = cheapest
         # Only show the bullets/throwables option if it's actually cheaper.
         if not raid_combo or cost_each < raid_combo[0]:
-            lines.append(f"💸 **Cheapest (incl. bullets/throwables)** — {cost_each * qty:,} sulfur")
-            lines.append(f"   {_format_combo(parts, qty)}")
+            lines.append(f"💸 **Cheapest (incl. bullets/throwables)**")
+            lines.append(f"> {_format_combo(parts, qty)}")
+            lines.append(f"> Total: **{cost_each * qty:,} sulfur**")
+            lines.append("")
 
-    lines.append("")
     lines.append("📊 **Single-tool options**")
     lines.append(table)
 
@@ -641,7 +687,6 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
         "title": "💥 Rust Raid Calculator",
         "description": "\n".join(lines),
         "color": EMBED_COLOR,
-        "footer": {"text": "Damage values from RustLabs · counts match rusthelp.com"},
     }
 
 

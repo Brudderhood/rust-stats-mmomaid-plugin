@@ -1,7 +1,7 @@
 {
   "id": "rust_stats",
   "name": "Rust Stats + Raid",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "capabilities": [
     "proxy:http",
     "discord:send_message",
@@ -31,13 +31,21 @@
           "type": 3,
           "required": true,
           "choices": [
-            { "name": "Sheet Metal Door",       "value": "sheetdoor" },
-            { "name": "Garage Door",            "value": "garagedoor" },
-            { "name": "Armored Door",           "value": "armoreddoor" },
-            { "name": "Stone Wall (hard side)", "value": "stonewall" },
-            { "name": "Stone Wall (soft side)", "value": "stonewallsoft" },
-            { "name": "Sheet Metal Wall",       "value": "metalwall" },
-            { "name": "Armored Wall (HQM)",     "value": "hqmwall" }
+            { "name": "Wooden Door",                "value": "woodendoor" },
+            { "name": "Wood Double Door",           "value": "wooddoubledoor" },
+            { "name": "Sheet Metal Door",           "value": "sheetdoor" },
+            { "name": "Sheet Metal Double Door",    "value": "sheetmetaldoubledoor" },
+            { "name": "Garage Door",                "value": "garagedoor" },
+            { "name": "Armored Door",               "value": "armoreddoor" },
+            { "name": "Armored Double Door",        "value": "armoreddoubledoor" },
+            { "name": "Ladder Hatch",               "value": "ladderhatch" },
+            { "name": "Wooden Wall",                "value": "woodenwall" },
+            { "name": "Stone Wall (hard side)",     "value": "stonewall" },
+            { "name": "Stone Wall (soft side)",     "value": "stonewallsoft" },
+            { "name": "Sheet Metal Wall",           "value": "metalwall" },
+            { "name": "Armored Wall (HQM)",         "value": "hqmwall" },
+            { "name": "High External Wooden Wall",  "value": "highexternalwoodwall" },
+            { "name": "High External Stone Wall",   "value": "highexternalstonewall" }
           ]
         },
         {
