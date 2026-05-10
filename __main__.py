@@ -466,7 +466,7 @@ RAID_TARGETS: list[dict] = [
     },
     {
         "name": "Garage Door", "emoji": "🚛", "hp": 600,
-        "damage": [1000.0, 200.0, 70.0, 12.3,    0.5,    4.0,    None],
+        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,    None],
         "aliases": ["garagedoor", "garage", "gd"],
     },
     {
