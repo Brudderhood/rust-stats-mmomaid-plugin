@@ -1,5 +1,9 @@
 {
+  "id": "rust-stats-raid",
+  "name": "Rust Stats + Raid",
+  "version": "0.2.0",
   "capabilities": [
+    "proxy:http",
     "discord:send_message",
     "events:message_content",
     "interaction:respond"
