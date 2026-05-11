@@ -93,19 +93,32 @@ def _extract_option(event: dict, name: str) -> str:
     container we might see: dict-of-options, list-of-{name,value} dicts,
     Discord-raw "data.options", and top-level keys.
     """
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    interaction = event.get("interaction") if isinstance(event.get("interaction"), dict) else {}
+
     containers = [
         event.get("options"),
         event.get("params"),
         event.get("arguments"),
         event.get("args"),
-        (event.get("data") or {}).get("options") if isinstance(event.get("data"), dict) else None,
+        event.get("command_options"),
+        event.get("option_values"),
+        event.get("values"),
+        data.get("options"),
+        data.get("option_values"),
+        interaction.get("options"),
+        interaction.get("data", {}).get("options") if isinstance(interaction.get("data"), dict) else None,
     ]
 
     for opts in containers:
         if isinstance(opts, dict):
             v = opts.get(name)
             if v not in (None, ""):
-                return str(v).strip()
+                # Some runners wrap values as {"value": x, "type": n}
+                if isinstance(v, dict) and "value" in v:
+                    v = v["value"]
+                if v not in (None, ""):
+                    return str(v).strip()
         elif isinstance(opts, list):
             for item in opts:
                 if isinstance(item, dict) and item.get("name") == name:
@@ -772,42 +785,51 @@ def handle_statscheck_slash(ctx: Context, event: dict):
 @plugin.on_slash_command("raidcheck")
 def handle_raidcheck_slash(ctx: Context, event: dict):
     target_q = _extract_option(event, "target")
-    ctx.log(f"raidcheck: target_q={target_q!r}, event_keys={list(event.keys())}")
+    ctx.log(f"raidcheck: invoked target_q={target_q!r}")
 
     if not target_q:
-        ctx.log("raidcheck: no target, sending help", level="warning")
+        # Slash UI fired but we couldn't find the option value — dump the
+        # raw event shape so we can teach _extract_option about it.
+        try:
+            event_dump = json.dumps(event, default=str)[:1800]
+        except Exception:
+            event_dump = repr(event)[:1800]
+        ctx.log(
+            f"raidcheck: empty target from slash UI. event_keys={list(event.keys())} "
+            f"raw_event={event_dump}",
+            level="warning",
+        )
         ctx.interaction.respond(content=_raid_help_text(), ephemeral=True)
         return
 
-    # Defer immediately so the 3-second interaction window doesn't expire
-    # while we resolve aliases / solve combos / build the embed. Followup
-    # gives us up to 15 minutes to send the real response.
-    ctx.interaction.defer()
-
     target = _find_raid_target(target_q)
     if not target:
-        ctx.log(f"raidcheck: target not found for {target_q!r}", level="warning")
-        ctx.interaction.followup(
+        ctx.interaction.respond(
             content=f"❌ Unknown target `{target_q}`.\n{_raid_help_text()}",
             ephemeral=True,
         )
         return
 
-    # Slash UI always assumes a single structure — quantity is intentionally
-    # not exposed there because Discord was making the optional integer field
-    # mandatory in practice. Chat-text fallback still accepts a number suffix.
+    # No defer: the raid math is pure compute (microseconds) and respond()
+    # lands inside Discord's 3-second window comfortably. Defer + followup
+    # was leaving the interaction hung on "Thinking..." with no recovery.
     try:
         embed = _build_raid_embed(target, qty=1)
+        ctx.interaction.respond(embeds=[embed])
+        ctx.log(f"raidcheck: ok for {target['name']}")
     except Exception as exc:
-        ctx.log(f"raidcheck: embed build failed: {type(exc).__name__}: {exc!r}", level="error")
-        ctx.interaction.followup(
-            content=f"⚠️ Couldn't build the raid table for `{target['name']}`. ({exc})",
-            ephemeral=True,
-        )
-        return
-
-    ctx.interaction.followup(embeds=[embed])
-    ctx.log(f"raidcheck: ok for {target['name']}")
+        ctx.log(f"raidcheck: failed: {type(exc).__name__}: {exc!r}", level="error")
+        # Fallback to a plain channel message — bypasses the interaction layer
+        # entirely so the user still gets an answer if respond() is broken.
+        channel_id = event.get("channel_id") or (event.get("data") or {}).get("channel_id")
+        if channel_id:
+            try:
+                ctx.discord.send_message(
+                    channel_id=str(channel_id),
+                    embeds=[_build_raid_embed(target, qty=1)],
+                )
+            except Exception as exc2:
+                ctx.log(f"raidcheck: channel fallback failed: {exc2!r}", level="error")
 
 
 # Chat-command prefixes — users typing the literal text in a Discord channel.
