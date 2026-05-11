@@ -50,6 +50,7 @@ STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
 DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
+PLUGIN_VERSION = "0.0.25"  # keep in sync with manifest.json — stamped into responses
 
 PROXY_RETRY_ATTEMPTS = 3   # extra tries after the first, on RateLimitError
 PROXY_RETRY_CAP_S    = 65  # per-attempt sleep cap (proxy quota window is 1 min)
@@ -83,7 +84,7 @@ def _proxy_call(ctx: Context, label: str, fn, *args, **kwargs):
 
 @plugin.on_ready
 def on_ready(ctx: Context):
-    ctx.log("Rust Stats plugin ready")
+    ctx.log(f"Rust Stats plugin ready — v{PLUGIN_VERSION}")
 
 
 def _extract_option(event: dict, name: str) -> str:
@@ -737,6 +738,7 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
         ),
         "color": EMBED_COLOR,
         "fields": fields,
+        "footer": {"text": f"plugin v{PLUGIN_VERSION}"},
     }
 
 
@@ -745,7 +747,7 @@ def _raid_help_text() -> str:
         f"{t['emoji']} `{t['aliases'][0]}`" for t in RAID_TARGETS
     )
     return (
-        "❌ Please pick a target.\n"
+        f"❌ Please pick a target. _(plugin v{PLUGIN_VERSION})_\n"
         "Examples:\n"
         "• `/raidcheck stonewall`\n"
         "• `/raidcheck armoreddoor`\n"
