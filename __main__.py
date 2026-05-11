@@ -50,7 +50,8 @@ STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
 DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
-PLUGIN_VERSION = "0.0.25"  # keep in sync with manifest.json — stamped into responses
+PLUGIN_VERSION = "0.0.26"  # keep in sync with manifest.json — stamped into responses
+BUILD_BANNER = f"🟢 NEW BUILD v{PLUGIN_VERSION} — sync confirmed"  # loud marker so user can verify the portal pulled the new code
 
 PROXY_RETRY_ATTEMPTS = 3   # extra tries after the first, on RateLimitError
 PROXY_RETRY_CAP_S    = 65  # per-attempt sleep cap (proxy quota window is 1 min)
@@ -731,7 +732,7 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     })
 
     return {
-        "title": "💥 Rust Raid Calculator",
+        "title": f"💥 Rust Raid Calculator  •  {BUILD_BANNER}",
         "description": (
             f"{target['emoji']} **{target['name']}**  ×{qty}  ·  "
             f"**{int(hp * qty):,} HP**"
@@ -747,7 +748,8 @@ def _raid_help_text() -> str:
         f"{t['emoji']} `{t['aliases'][0]}`" for t in RAID_TARGETS
     )
     return (
-        f"❌ Please pick a target. _(plugin v{PLUGIN_VERSION})_\n"
+        f"{BUILD_BANNER}\n\n"
+        "❌ Please pick a target.\n"
         "Examples:\n"
         "• `/raidcheck stonewall`\n"
         "• `/raidcheck armoreddoor`\n"
