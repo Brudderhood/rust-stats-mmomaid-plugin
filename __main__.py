@@ -50,7 +50,7 @@ STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
 DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
-PLUGIN_VERSION = "0.0.27"  # keep in sync with manifest.json — stamped into responses
+PLUGIN_VERSION = "0.0.28"  # keep in sync with manifest.json — stamped into responses
 
 PROXY_RETRY_ATTEMPTS = 3   # extra tries after the first, on RateLimitError
 PROXY_RETRY_CAP_S    = 65  # per-attempt sleep cap (proxy quota window is 1 min)
@@ -459,17 +459,27 @@ USAGE_HELP = (
 
 RAID_TOOLS: list[dict] = [
     # (display name, short label, emoji, sulfur, charcoal — per unit)
-    # Molotov / Fire Arrow have no sulfur in their recipe; they're listed
+    # Sulfur uses the standard rusthelp.com / community raid-cost values
+    # (workbench gunpowder convention). Charcoal uses the mixing-table
+    # convention (1 charcoal per gunpowder), which is what players
+    # actually use to craft GP in practice — so it equals the gunpowder
+    # content of each tool's recipe.
+    #   C4         = 20× Explosive  →   20 × 50 GP = 1000 GP
+    #   Rocket     = 150 GP + 10× Explosive = 150 + 500 = 650 GP
+    #   Satchel    = 4× Beancan     →    4 × 60 = 240 GP
+    #   Beancan    = 60 GP
+    #   F1         = 30 GP
+    #   Explo 5.56 = 10 GP (per round)
+    #   HV Rocket  = 100 GP
+    # Molotov / Fire Arrow have no gunpowder and no sulfur cost — listed
     # as 0 so wood-tier targets surface them as the genuine cheapest raid.
-    # Charcoal values are starting estimates (gunpowder × 1 charcoal per
-    # gp at the old 1:1 recipe); calibrate against rusthelp.com if needed.
-    {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200, "charcoal": 1100},
-    {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400, "charcoal": 1400},
+    {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200, "charcoal": 1000},
+    {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400, "charcoal":  650},
     {"name": "Satchel Charge",              "short": "Satchel",  "emoji": "📦", "sulfur":  480, "charcoal":  240},
-    {"name": "Beancan Grenade",             "short": "Beancan",  "emoji": "🥫", "sulfur":   60, "charcoal":   30},
-    {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30, "charcoal":   15},
-    {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10, "charcoal":    5},
-    {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100, "charcoal":   50},
+    {"name": "Beancan Grenade",             "short": "Beancan",  "emoji": "🥫", "sulfur":   60, "charcoal":   60},
+    {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30, "charcoal":   30},
+    {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10, "charcoal":   10},
+    {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100, "charcoal":  100},
     {"name": "Molotov Cocktail",            "short": "Molotov",  "emoji": "🔥", "sulfur":    0, "charcoal":    0},
     {"name": "Fire Arrow",                  "short": "FireArrow","emoji": "🏹", "sulfur":    0, "charcoal":    0},
 ]
@@ -485,13 +495,10 @@ RAID_TARGETS: list[dict] = [
     # ── Doors ─────────────────────────────────────────────────────────────
     {
         "name": "Wooden Door", "emoji": "🚪", "hp": 200,
-        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0,  200.0,  40.0],
+        # Fire Arrow vs wood structures = 4 dmg/arrow (rustlabs canonical;
+        # legacy 40-dmg value was reverted years ago).
+        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0,  200.0,   4.0],
         "aliases": ["woodendoor", "wooddoor", "wd"],
-    },
-    {
-        "name": "Wood Double Door", "emoji": "🚪", "hp": 200,
-        "damage": [1000.0, 600.0, 210.0, 30.0,   5.0,   12.5,   50.0,  200.0,  40.0],
-        "aliases": ["wooddoubledoor", "woodendoubledoor", "wdd"],
     },
     {
         "name": "Sheet Metal Door", "emoji": "🚪", "hp": 250,
@@ -499,24 +506,16 @@ RAID_TARGETS: list[dict] = [
         "aliases": ["sheetmetaldoor", "sheetdoor", "smdoor", "sheet"],
     },
     {
-        "name": "Sheet Metal Double Door", "emoji": "🚪", "hp": 250,
-        "damage": [275.0, 275.0,  70.0, 12.0,    5.0,    4.0,   24.0,    None,   None],
-        "aliases": ["sheetmetaldoubledoor", "smdd", "metaldoubledoor"],
-    },
-    {
         "name": "Garage Door", "emoji": "🚛", "hp": 600,
-        "damage": [400.0, 200.0,  70.0, 12.3,    0.5,    4.0,   None,    None,   None],
+        # F1 stuck dmg = 5 (rusthelp). Existing 0.5 was the *thrown* value,
+        # not the way anyone actually raids a garage door.
+        "damage": [400.0, 200.0,  70.0, 12.3,    5.0,    4.0,   None,    None,   None],
         "aliases": ["garagedoor", "garage", "gd"],
     },
     {
         "name": "Armored Door", "emoji": "🛡️", "hp": 1000,
         "damage": [400.0, 200.0,  70.0, 12.2,    5.0,    4.0,   None,    None,   None],
         "aliases": ["armoreddoor", "armoureddoor", "armoured", "armored", "ad"],
-    },
-    {
-        "name": "Armored Double Door", "emoji": "🛡️", "hp": 1000,
-        "damage": [400.0, 200.0,  70.0, 14.5,    5.0,    4.0,   24.0,    None,   None],
-        "aliases": ["armoreddoubledoor", "armoureddoubledoor", "add"],
     },
     {
         "name": "Ladder Hatch", "emoji": "🪜", "hp": 250,
@@ -531,7 +530,9 @@ RAID_TARGETS: list[dict] = [
     },
     {
         "name": "Stone Wall (hard side)", "emoji": "🧱", "hp": 500,
-        "damage": [125.0, 125.0,  50.0, 11.0,    None,   2.71,   None,   None,   None],
+        # Rusthelp: 2 C4 / 4 Rocket destroys 500 HP wall regardless of side.
+        # The old 125/125 values would have required 4 C4 — wrong.
+        "damage": [250.0, 137.5,  50.0, 11.0,    None,   2.71,   None,   None,   None],
         "aliases": ["stonewall", "stone", "stonewallhard", "swhard", "sw"],
     },
     {
@@ -546,7 +547,9 @@ RAID_TARGETS: list[dict] = [
     },
     {
         "name": "Armored Wall (HQM)", "emoji": "💎", "hp": 2000,
-        "damage": [275.0, 137.0,  44.0,  7.65,   1.0075, 2.504,  None,   None,   None],
+        # Rusthelp: 8 C4 / 15 Rocket destroys 2000 HP HQM wall →
+        # C4 = 250, Rocket = 137.5 (canonical game values).
+        "damage": [250.0, 137.5,  44.0,  7.65,   1.0075, 2.504,  None,   None,   None],
         "aliases": ["armoredwall", "armouredwall", "hqmwall", "hqm", "aw"],
     },
     # ── Compound / external ───────────────────────────────────────────────
@@ -562,8 +565,13 @@ RAID_TARGETS: list[dict] = [
     },
     # ── Deployables ───────────────────────────────────────────────────────
     {
-        "name": "Tool Cupboard", "emoji": "🛠️", "hp": 1000,
-        "damage": [250.0, 143.0,  44.0,  7.64,   1.008,  2.5,    None,   None,   None],
+        "name": "Tool Cupboard", "emoji": "🛠️", "hp": 100,
+        # TC is 100 HP per rusthelp / fandom / facepunch wiki. Damage row
+        # is per-tool against deployables; the iconic "2 satchels = 1 TC"
+        # raid implies satchel = 50+ vs TC, but rusthelp shows 1 satchel
+        # destroys it (70 dmg ≥ 100? — uses listed deployable dmg of 70,
+        # so 2 needed). HV Rocket vs TC is viable per rusthelp.
+        "damage": [250.0, 143.0,  70.0, 25.0,   100.0,   2.5,   50.0,    None,   None],
         "aliases": ["toolcupboard", "tc", "cupboard"],
     },
     {

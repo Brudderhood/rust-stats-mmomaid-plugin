@@ -1,7 +1,7 @@
 {
   "id": "rust_stats",
   "name": "Rust Stats + Raid",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "capabilities": [
     "proxy:http",
     "discord:send_message",
@@ -32,12 +32,9 @@
           "required": true,
           "choices": [
             { "name": "Wooden Door",                "value": "woodendoor" },
-            { "name": "Wood Double Door",           "value": "wooddoubledoor" },
             { "name": "Sheet Metal Door",           "value": "sheetdoor" },
-            { "name": "Sheet Metal Double Door",    "value": "sheetmetaldoubledoor" },
             { "name": "Garage Door",                "value": "garagedoor" },
             { "name": "Armored Door",               "value": "armoreddoor" },
-            { "name": "Armored Double Door",        "value": "armoreddoubledoor" },
             { "name": "Ladder Hatch",               "value": "ladderhatch" },
             { "name": "Wooden Wall",                "value": "woodenwall" },
             { "name": "Stone Wall (hard side)",     "value": "stonewall" },
