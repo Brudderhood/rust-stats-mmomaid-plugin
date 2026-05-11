@@ -50,8 +50,7 @@ STEAMID_JSON_RE    = re.compile(r'"steamid"\s*:\s*"(\d{17})"')
 DIGITS17_RE        = re.compile(r"\b(\d{17})\b")
 
 EMBED_COLOR = 0xCD412B  # Rust orange-ish
-PLUGIN_VERSION = "0.0.26"  # keep in sync with manifest.json — stamped into responses
-BUILD_BANNER = f"🟢 NEW BUILD v{PLUGIN_VERSION} — sync confirmed"  # loud marker so user can verify the portal pulled the new code
+PLUGIN_VERSION = "0.0.27"  # keep in sync with manifest.json — stamped into responses
 
 PROXY_RETRY_ATTEMPTS = 3   # extra tries after the first, on RateLimitError
 PROXY_RETRY_CAP_S    = 65  # per-attempt sleep cap (proxy quota window is 1 min)
@@ -459,18 +458,20 @@ USAGE_HELP = (
 # bounded knapsack so we surface the cheapest mix, not just pure stacks.
 
 RAID_TOOLS: list[dict] = [
-    # (display name, short label, emoji, sulfur cost per unit)
+    # (display name, short label, emoji, sulfur, charcoal — per unit)
     # Molotov / Fire Arrow have no sulfur in their recipe; they're listed
     # as 0 so wood-tier targets surface them as the genuine cheapest raid.
-    {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200},
-    {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400},
-    {"name": "Satchel Charge",              "short": "Satchel",  "emoji": "📦", "sulfur":  480},
-    {"name": "Beancan Grenade",             "short": "Beancan",  "emoji": "🥫", "sulfur":   60},
-    {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30},
-    {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10},
-    {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100},
-    {"name": "Molotov Cocktail",            "short": "Molotov",  "emoji": "🔥", "sulfur":    0},
-    {"name": "Fire Arrow",                  "short": "FireArrow","emoji": "🏹", "sulfur":    0},
+    # Charcoal values are starting estimates (gunpowder × 1 charcoal per
+    # gp at the old 1:1 recipe); calibrate against rusthelp.com if needed.
+    {"name": "Timed Explosive Charge (C4)", "short": "C4",       "emoji": "💣", "sulfur": 2200, "charcoal": 1100},
+    {"name": "Rocket",                      "short": "Rocket",   "emoji": "🚀", "sulfur": 1400, "charcoal": 1400},
+    {"name": "Satchel Charge",              "short": "Satchel",  "emoji": "📦", "sulfur":  480, "charcoal":  240},
+    {"name": "Beancan Grenade",             "short": "Beancan",  "emoji": "🥫", "sulfur":   60, "charcoal":   30},
+    {"name": "F1 Grenade",                  "short": "F1",       "emoji": "💥", "sulfur":   30, "charcoal":   15},
+    {"name": "Explosive 5.56 Rifle Ammo",   "short": "Explo556", "emoji": "🔫", "sulfur":   10, "charcoal":    5},
+    {"name": "High Velocity Rocket",        "short": "HVRocket", "emoji": "⚡", "sulfur":  100, "charcoal":   50},
+    {"name": "Molotov Cocktail",            "short": "Molotov",  "emoji": "🔥", "sulfur":    0, "charcoal":    0},
+    {"name": "Fire Arrow",                  "short": "FireArrow","emoji": "🏹", "sulfur":    0, "charcoal":    0},
 ]
 
 # Damage per tool against each target (calibrated so ceil(HP/dmg) reproduces
@@ -674,7 +675,13 @@ def _format_combo(parts: list[tuple[int, int]], qty: int = 1) -> str:
 
 # Tool-set restrictions for the headline combos.
 _C4_IDX, _ROCKET_IDX, _EXPLO_IDX = 0, 1, 5
-_C4_ROCKET_IDXS = [_C4_IDX, _ROCKET_IDX]
+# Headline raid combo now includes Explo 5.56 alongside C4 and Rocket —
+# explosive ammo is the go-to cheap-but-slow option real raiders mix in.
+_RAID_COMBO_IDXS = [_C4_IDX, _ROCKET_IDX, _EXPLO_IDX]
+
+
+def _combo_charcoal(parts: list[tuple[int, int]], qty: int = 1) -> int:
+    return sum(RAID_TOOLS[i]["charcoal"] * c * qty for i, c in parts)
 
 
 def _build_raid_embed(target: dict, qty: int) -> dict:
@@ -687,8 +694,8 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     # against this target are skipped entirely — no point showing rows that
     # always read "n/a / —".
     table_lines = [
-        f"{'Tool':<14} {'Qty':>7}  {'Sulfur':>10}",
-        "─" * 36,
+        f"{'Tool':<14}{'Qty':>7}  {'Sulfur':>8}  {'Charcoal':>8}",
+        "─" * 41,
     ]
     for tool, dmg in zip(RAID_TOOLS, damages):
         if dmg is None:
@@ -696,34 +703,54 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
         per = _count_for(dmg, hp) or 0
         c = per * qty
         s = c * tool["sulfur"]
-        table_lines.append(f"{tool['emoji']} {tool['short']:<11} {c:>7,}  {s:>10,}")
+        ch = c * tool["charcoal"]
+        table_lines.append(
+            f"{tool['emoji']} {tool['short']:<11}{c:>7,}  {s:>8,}  {ch:>8,}"
+        )
     table = "```\n" + "\n".join(table_lines) + "\n```"
 
     # Headline combos (each solved per single structure):
-    #   - "raid combo": cheapest mix of C4 and Rocket — what most raiders use
-    #   - "cheapest":   cheapest mix of any tool incl. ammo (often a slow grind)
-    raid_combo = _solve_combo(hp, damages, costs, allow=_C4_ROCKET_IDXS)
+    #   - "raid combo": cheapest mix of C4 / Rocket / Explo 5.56 — what most
+    #                   raiders actually mix in practice
+    #   - "cheapest":   cheapest mix of any tool incl. throwables/fire
+    raid_combo = _solve_combo(hp, damages, costs, allow=_RAID_COMBO_IDXS)
     cheapest   = _solve_combo(hp, damages, costs)
 
     # Discord renders embed `fields` with real visual separation, which is
     # what we want — putting these inside the description squashes them.
     fields: list[dict] = []
+    spacer = {"name": "​", "value": "​", "inline": False}
 
     if raid_combo:
         cost_each, parts = raid_combo
+        charcoal_each = _combo_charcoal(parts)
         fields.append({
-            "name": "💣 Raid combo (C4/Rocket)",
-            "value": f"{_format_combo(parts, qty)}\nTotal: **{cost_each * qty:,} sulfur**",
+            "name": "💣 Raid combo (C4 / Rocket / Explo)",
+            "value": (
+                f"{_format_combo(parts, qty)}\n"
+                f"Total: **{cost_each * qty:,} sulfur** · "
+                f"**{charcoal_each * qty:,} charcoal**"
+            ),
             "inline": False,
         })
 
     if cheapest and (not raid_combo or cheapest[0] < raid_combo[0]):
         cost_each, parts = cheapest
+        charcoal_each = _combo_charcoal(parts)
         fields.append({
             "name": "💸 Cheapest overall",
-            "value": f"{_format_combo(parts, qty)}\nTotal: **{cost_each * qty:,} sulfur**",
+            "value": (
+                f"{_format_combo(parts, qty)}\n"
+                f"Total: **{cost_each * qty:,} sulfur** · "
+                f"**{charcoal_each * qty:,} charcoal**"
+            ),
             "inline": False,
         })
+
+    # Blank spacer field to vertically separate the headline combos from
+    # the single-tool table beneath them.
+    if fields:
+        fields.append(spacer)
 
     fields.append({
         "name": "📊 Single-tool options",
@@ -732,10 +759,10 @@ def _build_raid_embed(target: dict, qty: int) -> dict:
     })
 
     return {
-        "title": f"💥 Rust Raid Calculator  •  {BUILD_BANNER}",
+        "title": "💥 Rust Raid Calculator",
         "description": (
             f"{target['emoji']} **{target['name']}**  ×{qty}  ·  "
-            f"**{int(hp * qty):,} HP**"
+            f"**{int(hp * qty):,} HP**\n​"  # trailing zero-width line for breathing room above the first field
         ),
         "color": EMBED_COLOR,
         "fields": fields,
@@ -748,8 +775,7 @@ def _raid_help_text() -> str:
         f"{t['emoji']} `{t['aliases'][0]}`" for t in RAID_TARGETS
     )
     return (
-        f"{BUILD_BANNER}\n\n"
-        "❌ Please pick a target.\n"
+        f"❌ Please pick a target. _(plugin v{PLUGIN_VERSION})_\n"
         "Examples:\n"
         "• `/raidcheck stonewall`\n"
         "• `/raidcheck armoreddoor`\n"
