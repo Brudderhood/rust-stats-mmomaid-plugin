@@ -746,10 +746,10 @@ def _raid_help_text() -> str:
     )
     return (
         "❌ Please pick a target.\n"
-        f"Examples:\n"
-        f"• `/raidcheck stonewall`\n"
-        f"• `/raidcheck armoreddoor 4`\n"
-        f"• `/raidcheck hqmwall 2`\n"
+        "Examples:\n"
+        "• `/raidcheck stonewall`\n"
+        "• `/raidcheck armoreddoor`\n"
+        "• `/raidcheck hqmwall`\n"
         f"\nValid targets: {aliases_preview}"
     )
 
